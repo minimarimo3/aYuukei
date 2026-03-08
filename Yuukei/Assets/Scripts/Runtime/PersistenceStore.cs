@@ -92,6 +92,24 @@ namespace Yuukei.Runtime
             }
         }
 
+        public void SaveImmediately()
+        {
+            int targetVersion;
+            lock (_saveStateLock)
+            {
+                targetVersion = _requestedSaveVersion;
+            }
+
+            SaveCore(CancellationToken.None);
+            lock (_saveStateLock)
+            {
+                if (_flushedSaveVersion < targetVersion)
+                {
+                    _flushedSaveVersion = targetVersion;
+                }
+            }
+        }
+
         public void RequestSave()
         {
             lock (_saveStateLock)
@@ -188,14 +206,22 @@ namespace Yuukei.Runtime
 
         private async UniTask SaveCoreAsync(CancellationToken cancellationToken)
         {
+            await UniTask.SwitchToThreadPool();
+            SaveCore(cancellationToken);
+            await UniTask.SwitchToMainThread(cancellationToken);
+        }
+
+        private void SaveCore(CancellationToken cancellationToken)
+        {
             var directory = Path.GetDirectoryName(_saveFilePath) ?? Application.persistentDataPath;
             Directory.CreateDirectory(directory);
-            await _saveLock.WaitAsync(cancellationToken);
+            _saveLock.Wait(cancellationToken);
             var temporaryPath = _saveFilePath + ".tmp";
             try
             {
                 var json = JsonConvert.SerializeObject(Data, Formatting.Indented);
-                await File.WriteAllTextAsync(temporaryPath, json, cancellationToken);
+                cancellationToken.ThrowIfCancellationRequested();
+                File.WriteAllText(temporaryPath, json);
                 if (File.Exists(_saveFilePath))
                 {
                     File.Replace(temporaryPath, _saveFilePath, null);

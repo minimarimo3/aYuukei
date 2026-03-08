@@ -80,6 +80,31 @@ namespace Yuukei.Tests.EditMode
         }
 
         [Test]
+        public async Task RequestSave_AndSaveImmediately_PersistChanges()
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-savesync-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            var savePath = Path.Combine(tempDirectory, "save.json");
+
+            try
+            {
+                var store = new PersistenceStore(savePath);
+                store.SetActivePackageId("sync-package");
+                store.RequestSave();
+                store.SaveImmediately();
+
+                var reloaded = new PersistenceStore(savePath);
+                await reloaded.LoadAsync();
+
+                Assert.That(reloaded.Data.ActivePackageId, Is.EqualTo("sync-package"));
+            }
+            finally
+            {
+                Directory.Delete(tempDirectory, true);
+            }
+        }
+
+        [Test]
         public async Task LoadAsync_IgnoresUnsupportedPersistentVariableTypes()
         {
             var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-badpersist-" + Guid.NewGuid().ToString("N"));

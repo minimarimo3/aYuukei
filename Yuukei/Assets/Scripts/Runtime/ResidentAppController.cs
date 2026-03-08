@@ -118,7 +118,7 @@ namespace Yuukei.Runtime
 
         private void OnApplicationQuit()
         {
-            SaveStateOnExitAsync().AsTask().GetAwaiter().GetResult();
+            SaveStateOnExit();
         }
 
         private void OnDestroy()
@@ -428,21 +428,19 @@ namespace Yuukei.Runtime
 
         private async UniTask ExitApplicationAsync()
         {
-            await SaveStateOnExitAsync();
+            SaveStateOnExit();
 #if UNITY_EDITOR
             UnityEditor.EditorApplication.isPlaying = false;
 #else
             Application.Quit();
 #endif
+
+            await UniTask.CompletedTask;
         }
 
-        private async UniTask SaveStateOnExitAsync()
+        private void SaveStateOnExit()
         {
-            if (_persistenceStore != null)
-            {
-                await _persistenceStore.FlushPendingSaveAsync(CancellationToken.None);
-                await _persistenceStore.SaveAsync(CancellationToken.None);
-            }
+            _persistenceStore?.SaveImmediately();
         }
 
         private void ApplyMascotMode()
