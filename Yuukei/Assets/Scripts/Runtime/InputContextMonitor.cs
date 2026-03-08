@@ -77,11 +77,6 @@ namespace Yuukei.Runtime
                     continue;
                 }
 
-                if (display.Index == blockedForegroundDisplay)
-                {
-                    continue;
-                }
-
                 _allowedDisplayIndices.Add(display.Index);
             }
 
