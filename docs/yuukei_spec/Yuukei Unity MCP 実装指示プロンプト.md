@@ -175,6 +175,7 @@ show_choices(...):
 
 # 実行モデル
 - DaihonBridge は 1 度に 1 イベントのみ実行
+- 1 イベントは有効な全 Daihon に対して配列順で配送する
 - 実行中に別イベントが来たら FIFO キューへ積む
 - periodic_tick のみ最新 1 件保持の coalescing を許可
 - await を伴う標準関数は show_choices のみ
@@ -203,7 +204,10 @@ manifest.json 形式:
   "license": "hoge",
   "id": "00000000-0000-0000-0000-000000000000",
   "character": "character.vrm",
-  "daihon": "Scripts/main.daihon",
+  "daihon": [
+    "Scripts/バレンタイン.daihon",
+    "Scripts/正月.daihon"
+  ],
   "textures": {
     "speechBubble": {
       "background": "Textures/speech_bubble_bg.png",
@@ -234,6 +238,8 @@ manifest.json 形式:
 ルール:
 - すべて相対パス
 - 壊れた要素のみスキップして継続
+- `daihon` は順序付き配列として扱い、配列順にロードする
+- 壊れた `daihon` は個別に警告してスキップする
 - DLL は自動ロードしない
 - alias は manifest から追加登録可能
 
@@ -242,7 +248,7 @@ save.json:
 {
   "activePackageId": "00000000-0000-0000-0000-000000000000",
   "overrides": {
-    "daihon": "",
+    "daihon": [],
     "character": "",
     "textures": {},
     "assets": {},
@@ -265,6 +271,7 @@ save.json:
 - 保存先は Application.persistentDataPath/save.json
 - API キーは OS のセキュアストア
 - パッケージ切替時は overrides を初期化
+- overrides.daihon は有効 Daihon 配列全体への上書きとし、空配列はパッケージ既定を意味する
 - 一時変数、キャラクター位置、吹き出し状態、実行中選択肢状態、再生中モーション状態は保存しない
 - persistentVariables は bool / number / string のみ
 
@@ -293,7 +300,7 @@ save.json:
 - About
 
 外見と振る舞い:
-- 台本
+- 台本一覧
 - VRM
 - 小物
 - テクスチャ
@@ -333,7 +340,7 @@ UI 方針:
 # 初回起動
 1. スプラッシュ
 2. デフォルトキャラ出現
-3. デフォルト Daihon 有効化
+3. デフォルト Daihon 群有効化
 4. Daihon ベースのチュートリアル開始
 
 # 実装すべき主要コンポーネント

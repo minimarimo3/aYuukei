@@ -1,4 +1,4 @@
-# Yuukei 完成版実装仕様書 v1.1
+# Yuukei 完成版実装仕様書 v1.2
 ## 05. Daihon実行契約
 
 ## 13. Daihon 実行契約
@@ -13,6 +13,15 @@ Unity 側は Daihon 言語仕様そのものを設計しない。
 - 永続化基盤
 - 実行時表示制御
 - alias 解決層
+
+### 13.1.1 複数 Daihon の扱い
+
+- パッケージおよび override では複数の Daihon を保持できる
+- 有効な Daihon 集合は manifest または save.json の override から決定する
+- Daihon は配列順にロードし、同一イベントは有効な全 Daihon へその順で配送する
+- ある Daihon が await を伴って停止した場合、後続 Daihon の実行はその完了後に続行する
+- 永続変数ストアと alias レジストリは有効 Daihon 群で共有する
+- 壊れた Daihon は個別に警告してスキップし、ほかの Daihon 実行は継続する
 
 ### 13.2 Canonical 名と別名の両立
 
