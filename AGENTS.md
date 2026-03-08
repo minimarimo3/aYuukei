@@ -9,6 +9,7 @@ The Unity project is already set up with:
 
 - **UniTask**
 - **UniVRM**
+- **UniWindowController**
 - **CoplayDev/unity-mcp**
 
 Your job is to implement, extend, and refactor the Unity project in a way that matches the project specifications exactly, while preserving future portability to macOS / Android / iOS / Linux where practical.
