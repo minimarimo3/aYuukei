@@ -68,7 +68,7 @@ namespace Yuukei.Runtime
                 Version = StarterVersion,
                 Id = StarterPackageId,
                 License = "Placeholder starter package",
-                Daihon = "Scripts/main.daihon",
+                Daihon = new List<string> { "Scripts/main.daihon" },
                 Character = "character.vrm",
                 Textures = new Dictionary<string, PackageTextureManifest>
                 {
@@ -206,7 +206,7 @@ namespace Yuukei.Runtime
                 return selection;
             }
 
-            selection.DaihonPath = ResolveFile(package, overrides?.Daihon, package.Manifest.Daihon);
+            selection.DaihonPaths = ResolveOrderedFiles(package, overrides?.Daihon, package.Manifest.Daihon);
             selection.CharacterPath = ResolveFile(package, overrides?.Character, package.Manifest.Character);
 
             foreach (var pair in package.Manifest.Textures)
@@ -248,9 +248,12 @@ namespace Yuukei.Runtime
         {
             var report = new PackageValidationReport();
             var content = GetResolvedActiveContent();
-            if (!string.IsNullOrWhiteSpace(content.DaihonPath) && !File.Exists(content.DaihonPath))
+            foreach (var daihonPath in content.DaihonPaths)
             {
-                report.Warnings.Add($"Missing Daihon script: {content.DaihonPath}");
+                if (!File.Exists(daihonPath))
+                {
+                    report.Warnings.Add($"Missing Daihon script: {daihonPath}");
+                }
             }
 
             if (!string.IsNullOrWhiteSpace(content.CharacterPath) && !File.Exists(content.CharacterPath))
@@ -300,14 +303,63 @@ namespace Yuukei.Runtime
             return dictionary.TryGetValue(key, out var value) ? value : string.Empty;
         }
 
+        private static List<string> ResolveOrderedFiles(ResolvedPackage package, IReadOnlyList<string> overrideValues, IReadOnlyList<string> packageRelativePaths)
+        {
+            var resolvedPaths = new List<string>();
+            if (overrideValues != null && overrideValues.Count > 0)
+            {
+                foreach (var overrideValue in overrideValues)
+                {
+                    var resolvedOverride = ResolveOverrideFile(overrideValue);
+                    if (!string.IsNullOrWhiteSpace(resolvedOverride))
+                    {
+                        resolvedPaths.Add(resolvedOverride);
+                    }
+                }
+
+                return resolvedPaths;
+            }
+
+            if (packageRelativePaths == null)
+            {
+                return resolvedPaths;
+            }
+
+            foreach (var packageRelativePath in packageRelativePaths)
+            {
+                var resolvedPackagePath = ResolvePackageRelativeFile(package, packageRelativePath);
+                if (!string.IsNullOrWhiteSpace(resolvedPackagePath))
+                {
+                    resolvedPaths.Add(resolvedPackagePath);
+                }
+            }
+
+            return resolvedPaths;
+        }
+
         private static string ResolveFile(ResolvedPackage package, string overrideValue, string packageRelativePath)
         {
             if (!string.IsNullOrWhiteSpace(overrideValue))
             {
-                return Path.GetFullPath(overrideValue);
+                return ResolveOverrideFile(overrideValue);
             }
 
-            if (string.IsNullOrWhiteSpace(packageRelativePath) || Path.IsPathRooted(packageRelativePath))
+            return ResolvePackageRelativeFile(package, packageRelativePath);
+        }
+
+        private static string ResolveOverrideFile(string overrideValue)
+        {
+            if (string.IsNullOrWhiteSpace(overrideValue))
+            {
+                return string.Empty;
+            }
+
+            return Path.GetFullPath(overrideValue);
+        }
+
+        private static string ResolvePackageRelativeFile(ResolvedPackage package, string packageRelativePath)
+        {
+            if (package == null || string.IsNullOrWhiteSpace(packageRelativePath) || Path.IsPathRooted(packageRelativePath))
             {
                 return string.Empty;
             }

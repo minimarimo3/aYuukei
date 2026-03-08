@@ -40,6 +40,7 @@ namespace Yuukei.Runtime
 
                 loaded.ActivePackageId = root.Value<string>("activePackageId") ?? string.Empty;
                 loaded.Overrides = root["overrides"]?.ToObject<OverrideSelections>() ?? new OverrideSelections();
+                loaded.Overrides.Normalize();
                 loaded.AppState = root["appState"]?.ToObject<AppStateData>() ?? new AppStateData();
                 loaded.PersistentVariables = new Dictionary<string, object>();
 
@@ -129,6 +130,7 @@ namespace Yuukei.Runtime
         public void SetOverrides(OverrideSelections overrides)
         {
             Data.Overrides = overrides ?? new OverrideSelections();
+            Data.Overrides.Normalize();
         }
 
         public void UpdateAppState(Action<AppStateData> update)

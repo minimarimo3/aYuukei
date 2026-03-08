@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Linq;
 using Cysharp.Threading.Tasks;
 using UnityEngine;
@@ -235,8 +236,14 @@ namespace Yuukei.Runtime
         {
             var overrides = _persistenceStore?.Data?.Overrides ?? new OverrideSelections();
             var activePackage = _packageManager?.ActivePackage;
+            var activeContent = _packageManager?.GetResolvedActiveContent() ?? new PackageContentSelection();
             _contentHost.Add(CreateSectionHeader("差し替え"));
-            _contentHost.Add(CreateInfoRow("台本", string.IsNullOrWhiteSpace(overrides.Daihon) ? "パッケージ準拠" : overrides.Daihon));
+            _contentHost.Add(CreateInfoCard(
+                "台本一覧",
+                overrides.Daihon.Count == 0 ? "パッケージ準拠" : "個別指定",
+                activeContent.DaihonPaths.Count == 0
+                    ? "未設定"
+                    : string.Join("\n", activeContent.DaihonPaths.Select((path, index) => $"{index + 1}. {Path.GetFileName(path)}"))));
             _contentHost.Add(CreateInfoRow("VRM", string.IsNullOrWhiteSpace(overrides.Character) ? "パッケージ準拠" : overrides.Character));
             _contentHost.Add(CreateInfoRow("小物", overrides.Assets.Count == 0 ? "パッケージ準拠" : $"{overrides.Assets.Count} 件の個別指定"));
             _contentHost.Add(CreateInfoRow("テクスチャ", overrides.Textures.Count == 0 ? "パッケージ準拠" : $"{overrides.Textures.Count} 件の個別指定"));
@@ -490,6 +497,34 @@ namespace Yuukei.Runtime
             right.style.unityTextAlign = TextAnchor.MiddleRight;
             row.Add(right);
             return row;
+        }
+
+        private static VisualElement CreateInfoCard(string label, string state, string bodyText)
+        {
+            var card = CreateCard();
+            card.style.flexDirection = FlexDirection.Column;
+
+            var header = new VisualElement();
+            header.style.flexDirection = FlexDirection.Row;
+            header.style.justifyContent = Justify.SpaceBetween;
+            header.style.alignItems = Align.Center;
+            header.style.marginBottom = 8f;
+
+            var left = new Label(label);
+            left.style.unityFontStyleAndWeight = FontStyle.Bold;
+            header.Add(left);
+
+            var right = new Label(state ?? string.Empty);
+            right.style.unityTextAlign = TextAnchor.MiddleRight;
+            header.Add(right);
+
+            var body = new Label(bodyText ?? string.Empty);
+            body.style.whiteSpace = WhiteSpace.Normal;
+            body.style.unityTextAlign = TextAnchor.UpperLeft;
+
+            card.Add(header);
+            card.Add(body);
+            return card;
         }
 
         private static Label CreateSectionHeader(string text)

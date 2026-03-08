@@ -26,6 +26,18 @@ namespace Yuukei.Runtime
             public UniTaskCompletionSource CompletionSource { get; } = new UniTaskCompletionSource();
         }
 
+        private sealed class LoadedScript
+        {
+            public LoadedScript(string sourcePath, DaihonScriptRuntime.ScriptMetadata metadata)
+            {
+                SourcePath = sourcePath;
+                Metadata = metadata;
+            }
+
+            public string SourcePath { get; }
+            public DaihonScriptRuntime.ScriptMetadata Metadata { get; }
+        }
+
         private sealed class BridgeActionHandler : IActionHandler
         {
             private readonly SpeechBubbleController _speechBubbleController;
@@ -58,8 +70,8 @@ namespace Yuukei.Runtime
         private readonly DaihonFunctionDispatcher _dispatcher;
         private readonly SpeechBubbleController _speechBubbleController;
         private readonly List<PendingEvent> _queue = new List<PendingEvent>();
+        private readonly List<LoadedScript> _activeScripts = new List<LoadedScript>();
 
-        private DaihonScriptRuntime.ScriptMetadata _activeScript;
         private PendingEvent _coalescedPeriodicTick;
         private CancellationTokenSource _runtimeCancellation = new CancellationTokenSource();
         private bool _isProcessing;
@@ -108,20 +120,52 @@ namespace Yuukei.Runtime
             CancelAndClear();
             _aliasRegistry.ResetToBuiltins();
             _aliasRegistry.LoadPackageAliases(aliases);
+            _activeScripts.Clear();
 
-            if (contentSelection == null || string.IsNullOrWhiteSpace(contentSelection.DaihonPath) || !File.Exists(contentSelection.DaihonPath))
+            if (contentSelection == null || contentSelection.DaihonPaths == null || contentSelection.DaihonPaths.Count == 0)
             {
-                _activeScript = null;
                 return;
             }
 
-            var scriptText = await File.ReadAllTextAsync(contentSelection.DaihonPath, cancellationToken);
-            _activeScript = _runtime.Parse(scriptText);
+            foreach (var daihonPath in contentSelection.DaihonPaths)
+            {
+                if (string.IsNullOrWhiteSpace(daihonPath))
+                {
+                    continue;
+                }
+
+                if (!File.Exists(daihonPath))
+                {
+                    Debug.LogWarning($"[DaihonBridge] Skipping missing Daihon script '{daihonPath}'.");
+                    continue;
+                }
+
+                try
+                {
+                    var scriptText = await File.ReadAllTextAsync(daihonPath, cancellationToken);
+                    var metadata = _runtime.Parse(scriptText);
+                    if (metadata == null)
+                    {
+                        Debug.LogWarning($"[DaihonBridge] Skipping broken Daihon script '{daihonPath}'.");
+                        continue;
+                    }
+
+                    _activeScripts.Add(new LoadedScript(daihonPath, metadata));
+                }
+                catch (OperationCanceledException)
+                {
+                    throw;
+                }
+                catch (Exception exception)
+                {
+                    Debug.LogWarning($"[DaihonBridge] Failed to load Daihon script '{daihonPath}'. Skipping. {exception.Message}");
+                }
+            }
         }
 
         public UniTask RaiseEventAsync(string eventName, IReadOnlyDictionary<string, object> context, CancellationToken cancellationToken)
         {
-            if (_temporarilyDisabled || _activeScript == null)
+            if (_temporarilyDisabled || _activeScripts.Count == 0)
             {
                 return UniTask.CompletedTask;
             }
@@ -222,10 +266,21 @@ namespace Yuukei.Runtime
             try
             {
                 linkedSource.Token.ThrowIfCancellationRequested();
-                _variableStore.InjectEventContext(pendingEvent.Context);
-
                 var actionHandler = new BridgeActionHandler(_speechBubbleController, _dispatcher, linkedSource.Token);
-                await _runtime.RunEventAsync(_activeScript, pendingEvent.CanonicalName, _aliasRegistry, actionHandler, _variableStore, linkedSource.Token);
+                foreach (var script in _activeScripts)
+                {
+                    linkedSource.Token.ThrowIfCancellationRequested();
+                    _variableStore.InjectEventContext(pendingEvent.Context);
+                    try
+                    {
+                        await _runtime.RunEventAsync(script.Metadata, pendingEvent.CanonicalName, _aliasRegistry, actionHandler, _variableStore, linkedSource.Token);
+                    }
+                    finally
+                    {
+                        _variableStore.ResetTransientState();
+                    }
+                }
+
                 pendingEvent.CompletionSource.TrySetResult();
             }
             catch (OperationCanceledException)
@@ -236,10 +291,6 @@ namespace Yuukei.Runtime
             {
                 Debug.LogError($"[DaihonBridge] Runtime error while executing '{pendingEvent.CanonicalName}': {exception}");
                 pendingEvent.CompletionSource.TrySetException(exception);
-            }
-            finally
-            {
-                _variableStore.ResetTransientState();
             }
         }
     }

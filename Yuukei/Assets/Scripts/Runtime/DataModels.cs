@@ -26,7 +26,7 @@ namespace Yuukei.Runtime
     public sealed class OverrideSelections
     {
         [JsonProperty("daihon")]
-        public string Daihon = string.Empty;
+        public List<string> Daihon = new List<string>();
 
         [JsonProperty("character")]
         public string Character = string.Empty;
@@ -40,9 +40,18 @@ namespace Yuukei.Runtime
         [JsonProperty("motions")]
         public Dictionary<string, string> Motions = new Dictionary<string, string>();
 
+        public void Normalize()
+        {
+            Daihon ??= new List<string>();
+            Textures ??= new Dictionary<string, string>();
+            Assets ??= new Dictionary<string, string>();
+            Motions ??= new Dictionary<string, string>();
+            Daihon.RemoveAll(string.IsNullOrWhiteSpace);
+        }
+
         public void Reset()
         {
-            Daihon = string.Empty;
+            Daihon.Clear();
             Character = string.Empty;
             Textures.Clear();
             Assets.Clear();
@@ -98,7 +107,7 @@ namespace Yuukei.Runtime
         public string Character = string.Empty;
 
         [JsonProperty("daihon")]
-        public string Daihon = string.Empty;
+        public List<string> Daihon = new List<string>();
 
         [JsonProperty("textures")]
         public Dictionary<string, PackageTextureManifest> Textures = new Dictionary<string, PackageTextureManifest>();
@@ -117,11 +126,16 @@ namespace Yuukei.Runtime
 
         public void Normalize()
         {
+            Daihon ??= new List<string>();
             Textures ??= new Dictionary<string, PackageTextureManifest>();
             Assets ??= new List<string>();
             Motions ??= new List<string>();
             Dlls ??= new List<string>();
             Aliases ??= new PackageAliasManifest();
+            Daihon.RemoveAll(string.IsNullOrWhiteSpace);
+            Assets.RemoveAll(string.IsNullOrWhiteSpace);
+            Motions.RemoveAll(string.IsNullOrWhiteSpace);
+            Dlls.RemoveAll(string.IsNullOrWhiteSpace);
         }
     }
 
@@ -170,7 +184,7 @@ namespace Yuukei.Runtime
 
     public sealed class PackageContentSelection
     {
-        public string DaihonPath = string.Empty;
+        public List<string> DaihonPaths = new List<string>();
         public string CharacterPath = string.Empty;
         public Dictionary<string, string> TexturePaths = new Dictionary<string, string>();
         public Dictionary<string, string> AssetPaths = new Dictionary<string, string>();
