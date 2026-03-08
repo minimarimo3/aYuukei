@@ -1,5 +1,7 @@
 using System;
 using System.IO;
+using System.Threading.Tasks;
+using Cysharp.Threading.Tasks;
 using NUnit.Framework;
 using Yuukei.Runtime;
 
@@ -8,7 +10,7 @@ namespace Yuukei.Tests.EditMode
     public sealed class PersistenceStoreTests
     {
         [Test]
-        public void SaveRoundTrip_PreservesShape()
+        public async Task SaveRoundTrip_PreservesShape()
         {
             var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-tests-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDirectory);
@@ -24,10 +26,10 @@ namespace Yuukei.Tests.EditMode
                 store.SetPersistentVariable("flag", true);
                 store.SetPersistentVariable("count", 12d);
                 store.SetPersistentVariable("name", "Yuukei");
-                store.SaveAsync().GetAwaiter().GetResult();
+                await store.SaveAsync();
 
                 var reloaded = new PersistenceStore(savePath);
-                reloaded.LoadAsync().GetAwaiter().GetResult();
+                await reloaded.LoadAsync();
 
                 Assert.That(reloaded.Data.ActivePackageId, Is.EqualTo("package-a"));
                 Assert.That(reloaded.Data.Overrides.Daihon, Is.EqualTo(new[] { "Scripts/a.daihon", "Scripts/b.daihon" }));
@@ -50,6 +52,62 @@ namespace Yuukei.Tests.EditMode
 
             var exception = Assert.Throws<InvalidOperationException>(() => store.SetPersistentVariable("answer", "forty-two"));
             Assert.That(exception?.Message, Does.Contain("cannot change type"));
+        }
+
+        [Test]
+        public async Task RequestSave_AndFlushPendingSave_PersistChanges()
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-savequeue-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            var savePath = Path.Combine(tempDirectory, "save.json");
+
+            try
+            {
+                var store = new PersistenceStore(savePath);
+                store.SetActivePackageId("queued-package");
+                store.RequestSave();
+                await store.FlushPendingSaveAsync();
+
+                var reloaded = new PersistenceStore(savePath);
+                await reloaded.LoadAsync();
+
+                Assert.That(reloaded.Data.ActivePackageId, Is.EqualTo("queued-package"));
+            }
+            finally
+            {
+                Directory.Delete(tempDirectory, true);
+            }
+        }
+
+        [Test]
+        public async Task LoadAsync_IgnoresUnsupportedPersistentVariableTypes()
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-badpersist-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            var savePath = Path.Combine(tempDirectory, "save.json");
+            File.WriteAllText(savePath,
+@"{
+  ""activePackageId"": ""package-a"",
+  ""persistentVariables"": {
+    ""ok"": true,
+    ""badObject"": { ""nested"": true },
+    ""badArray"": [1, 2, 3]
+  }
+}");
+
+            try
+            {
+                var store = new PersistenceStore(savePath);
+                await store.LoadAsync();
+
+                Assert.That(store.Data.PersistentVariables.ContainsKey("ok"), Is.True);
+                Assert.That(store.Data.PersistentVariables.ContainsKey("badObject"), Is.False);
+                Assert.That(store.Data.PersistentVariables.ContainsKey("badArray"), Is.False);
+            }
+            finally
+            {
+                Directory.Delete(tempDirectory, true);
+            }
         }
     }
 }

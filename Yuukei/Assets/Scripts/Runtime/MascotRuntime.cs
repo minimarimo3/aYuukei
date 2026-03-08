@@ -3,8 +3,10 @@ using System.Collections.Generic;
 using System.IO;
 using System.Threading;
 using Cysharp.Threading.Tasks;
+using UniGLTF;
 using UniVRM10;
 using UnityEngine;
+using UnityEngine.Timeline;
 
 namespace Yuukei.Runtime
 {
@@ -21,12 +23,60 @@ namespace Yuukei.Runtime
             ["surprised"] = new Color(0.88f, 0.76f, 0.98f),
         };
 
+        private static readonly Dictionary<string, ExpressionKey> BuiltinExpressionAliases = new Dictionary<string, ExpressionKey>(StringComparer.Ordinal)
+        {
+            [AliasRegistry.Normalize("default")] = ExpressionKey.Neutral,
+            [AliasRegistry.Normalize("normal")] = ExpressionKey.Neutral,
+            [AliasRegistry.Normalize("neutral")] = ExpressionKey.Neutral,
+            [AliasRegistry.Normalize("happy")] = ExpressionKey.Happy,
+            [AliasRegistry.Normalize("smile")] = ExpressionKey.Happy,
+            [AliasRegistry.Normalize("angry")] = ExpressionKey.Angry,
+            [AliasRegistry.Normalize("sad")] = ExpressionKey.Sad,
+            [AliasRegistry.Normalize("relaxed")] = ExpressionKey.Relaxed,
+            [AliasRegistry.Normalize("surprised")] = ExpressionKey.Surprised,
+            [AliasRegistry.Normalize("aa")] = ExpressionKey.Aa,
+            [AliasRegistry.Normalize("ih")] = ExpressionKey.Ih,
+            [AliasRegistry.Normalize("ou")] = ExpressionKey.Ou,
+            [AliasRegistry.Normalize("ee")] = ExpressionKey.Ee,
+            [AliasRegistry.Normalize("oh")] = ExpressionKey.Oh,
+            [AliasRegistry.Normalize("blink")] = ExpressionKey.Blink,
+            [AliasRegistry.Normalize("blinkleft")] = ExpressionKey.BlinkLeft,
+            [AliasRegistry.Normalize("blinkright")] = ExpressionKey.BlinkRight,
+            [AliasRegistry.Normalize("lookup")] = ExpressionKey.LookUp,
+            [AliasRegistry.Normalize("lookdown")] = ExpressionKey.LookDown,
+            [AliasRegistry.Normalize("lookleft")] = ExpressionKey.LookLeft,
+            [AliasRegistry.Normalize("lookright")] = ExpressionKey.LookRight,
+        };
+
+        private sealed class LoadedMotion
+        {
+            public LoadedMotion(string name, RuntimeGltfInstance gltfInstance, Vrm10AnimationInstance animationInstance, ITimeControl timeControl, float durationSeconds)
+            {
+                Name = name;
+                GltfInstance = gltfInstance;
+                AnimationInstance = animationInstance;
+                TimeControl = timeControl;
+                DurationSeconds = durationSeconds;
+            }
+
+            public string Name { get; }
+            public RuntimeGltfInstance GltfInstance { get; }
+            public Vrm10AnimationInstance AnimationInstance { get; }
+            public ITimeControl TimeControl { get; }
+            public float DurationSeconds { get; }
+        }
+
         private Camera _worldCamera;
         private Transform _root;
         private Transform _anchor;
+        private Transform _motionRoot;
         private GameObject _placeholderRoot;
         private Renderer _placeholderBody;
+        private BoxCollider _hitbox;
         private readonly Dictionary<string, GameObject> _props = new Dictionary<string, GameObject>(StringComparer.OrdinalIgnoreCase);
+        private readonly Dictionary<string, LoadedMotion> _loadedMotions = new Dictionary<string, LoadedMotion>(StringComparer.Ordinal);
+        private readonly Dictionary<string, ExpressionKey> _expressionKeys = new Dictionary<string, ExpressionKey>(StringComparer.Ordinal);
+
         private Vrm10Instance _vrmInstance;
         private RectInt _virtualDesktopBounds;
         private IReadOnlyList<DesktopDisplayInfo> _displays = Array.Empty<DesktopDisplayInfo>();
@@ -36,6 +86,9 @@ namespace Yuukei.Runtime
         private bool _isVisible = true;
         private string _currentMotion = "idle";
         private float _motionPhase;
+        private LoadedMotion _activeMotion;
+        private float _activeMotionTime;
+        private ExpressionKey? _activeExpression;
 
         public void Initialize(Camera worldCamera)
         {
@@ -43,13 +96,19 @@ namespace Yuukei.Runtime
 
             _root = new GameObject("MascotRoot").transform;
             _root.SetParent(transform, false);
+            _hitbox = _root.gameObject.AddComponent<BoxCollider>();
+            _hitbox.isTrigger = true;
 
             _anchor = new GameObject("SpeechAnchor").transform;
             _anchor.SetParent(_root, false);
             _anchor.localPosition = new Vector3(0f, 2.1f, 0f);
 
+            _motionRoot = new GameObject("MotionCacheRoot").transform;
+            _motionRoot.SetParent(transform, false);
+
             CreatePlaceholder();
             CreateProps();
+            UpdateHitboxForPlaceholder();
         }
 
         public Vector3 SpeechAnchorWorldPosition => _anchor != null ? _anchor.position : transform.position;
@@ -72,8 +131,11 @@ namespace Yuukei.Runtime
             UpdateDisplayVisibility();
         }
 
-        public async UniTask LoadCharacterAsync(string characterPath, CancellationToken cancellationToken)
+        public async UniTask LoadCharacterAsync(string characterPath, System.Threading.CancellationToken cancellationToken)
         {
+            StopActiveMotion();
+            ClearExpressionCatalog();
+
             if (_vrmInstance != null)
             {
                 Destroy(_vrmInstance.gameObject);
@@ -81,6 +143,7 @@ namespace Yuukei.Runtime
             }
 
             _placeholderRoot.SetActive(true);
+            UpdateHitboxForPlaceholder();
 
             if (string.IsNullOrWhiteSpace(characterPath) || !File.Exists(characterPath))
             {
@@ -100,7 +163,12 @@ namespace Yuukei.Runtime
                 _vrmInstance.transform.localPosition = Vector3.zero;
                 _vrmInstance.transform.localRotation = Quaternion.identity;
                 _vrmInstance.transform.localScale = Vector3.one;
+                _vrmInstance.UpdateType = Vrm10Instance.UpdateTypes.None;
                 _placeholderRoot.SetActive(false);
+
+                RebuildExpressionCatalog();
+                UpdateHitboxForLoadedCharacter();
+                RebindCurrentMotion();
             }
             catch (Exception exception) when (!(exception is OperationCanceledException))
             {
@@ -112,11 +180,101 @@ namespace Yuukei.Runtime
                 }
 
                 _placeholderRoot.SetActive(true);
+                UpdateHitboxForPlaceholder();
             }
+        }
+
+        public async UniTask LoadMotionsAsync(IReadOnlyDictionary<string, string> motionPaths, System.Threading.CancellationToken cancellationToken)
+        {
+            ClearLoadedMotions();
+
+            if (motionPaths != null)
+            {
+                foreach (var pair in motionPaths)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (string.IsNullOrWhiteSpace(pair.Key) || string.IsNullOrWhiteSpace(pair.Value) || !File.Exists(pair.Value))
+                    {
+                        if (!string.IsNullOrWhiteSpace(pair.Value))
+                        {
+                            Debug.LogWarning($"[MascotRuntime] Motion '{pair.Key}' is missing: {pair.Value}");
+                        }
+
+                        continue;
+                    }
+
+                    RuntimeGltfInstance gltfInstance = null;
+                    try
+                    {
+                        using var data = new GlbFileParser(pair.Value).Parse();
+                        var motionData = new VrmAnimationData(data);
+                        using var loader = new VrmAnimationImporter(motionData);
+                        gltfInstance = await loader.LoadAsync(new ImmediateCaller());
+                        gltfInstance.transform.SetParent(_motionRoot, false);
+                        gltfInstance.transform.localPosition = Vector3.zero;
+                        gltfInstance.transform.localRotation = Quaternion.identity;
+                        gltfInstance.transform.localScale = Vector3.one;
+                        foreach (var renderer in gltfInstance.Renderers)
+                        {
+                            renderer.enabled = false;
+                        }
+
+                        var animationInstance = gltfInstance.GetComponent<Vrm10AnimationInstance>();
+                        animationInstance.ShowBoxMan(false);
+                        var duration = gltfInstance.AnimationClips.Count > 0
+                            ? Mathf.Max(gltfInstance.AnimationClips[0].length, 0.01f)
+                            : 0.01f;
+                        _loadedMotions[AliasRegistry.Normalize(pair.Key)] = new LoadedMotion(
+                            pair.Key,
+                            gltfInstance,
+                            animationInstance,
+                            (ITimeControl)animationInstance,
+                            duration);
+                    }
+                    catch (OperationCanceledException)
+                    {
+                        if (gltfInstance != null)
+                        {
+                            gltfInstance.Dispose();
+                        }
+
+                        throw;
+                    }
+                    catch (Exception exception)
+                    {
+                        if (gltfInstance != null)
+                        {
+                            gltfInstance.Dispose();
+                        }
+
+                        Debug.LogWarning($"[MascotRuntime] Failed to load motion '{pair.Key}' from '{pair.Value}'. Skipping. {exception.Message}");
+                    }
+                }
+            }
+
+            if (!_loadedMotions.ContainsKey(AliasRegistry.Normalize(_currentMotion)) && _loadedMotions.ContainsKey(AliasRegistry.Normalize("idle")))
+            {
+                _currentMotion = "idle";
+            }
+
+            RebindCurrentMotion();
         }
 
         public void SetExpression(string name)
         {
+            if (_vrmInstance != null)
+            {
+                if (!TryResolveExpressionKey(name, out var expressionKey))
+                {
+                    Debug.LogWarning($"[MascotRuntime] Unknown expression '{name}'.");
+                    return;
+                }
+
+                _activeExpression = expressionKey;
+                ApplyExpressionOverride();
+                return;
+            }
+
             if (_placeholderBody == null)
             {
                 return;
@@ -139,8 +297,9 @@ namespace Yuukei.Runtime
                 return;
             }
 
-            _currentMotion = name;
+            _currentMotion = name.Trim();
             _motionPhase = 0f;
+            RebindCurrentMotion();
         }
 
         public void SetPropVisible(string name, bool visible)
@@ -186,6 +345,7 @@ namespace Yuukei.Runtime
             _desktopPosition = next;
             ApplyDesktopPosition();
             AnimateMotion(deltaTime);
+            ProcessLoadedCharacter(deltaTime);
         }
 
         public bool HitTestScreenPoint(Vector2 screenPoint)
@@ -196,7 +356,7 @@ namespace Yuukei.Runtime
             }
 
             var ray = _worldCamera.ScreenPointToRay(screenPoint);
-            return Physics.Raycast(ray, out _, 100f);
+            return _hitbox != null && _hitbox.Raycast(ray, out _, 100f);
         }
 
         public void MoveByScreenDelta(Vector2 delta)
@@ -218,6 +378,12 @@ namespace Yuukei.Runtime
             {
                 color = ExpressionPalette["default"],
             };
+
+            var placeholderCollider = _placeholderRoot.GetComponent<Collider>();
+            if (placeholderCollider != null)
+            {
+                placeholderCollider.enabled = false;
+            }
         }
 
         private void CreateProps()
@@ -232,6 +398,13 @@ namespace Yuukei.Runtime
                 color = new Color(0.96f, 0.87f, 0.42f),
             };
             halo.SetActive(false);
+
+            var propCollider = halo.GetComponent<Collider>();
+            if (propCollider != null)
+            {
+                propCollider.enabled = false;
+            }
+
             _props["halo"] = halo;
         }
 
@@ -303,7 +476,11 @@ namespace Yuukei.Runtime
                     localPosition.y += Mathf.Sin(_motionPhase * 2.3f) * 0.12f;
                     break;
                 default:
-                    Debug.LogWarning($"[MascotRuntime] Unknown motion '{_currentMotion}'.");
+                    if (_activeMotion == null)
+                    {
+                        Debug.LogWarning($"[MascotRuntime] Unknown motion '{_currentMotion}'.");
+                    }
+
                     _currentMotion = "idle";
                     break;
             }
@@ -313,6 +490,202 @@ namespace Yuukei.Runtime
                 _placeholderRoot.transform.localPosition = localPosition;
                 _placeholderRoot.transform.localRotation = localRotation;
             }
+        }
+
+        private void ProcessLoadedCharacter(float deltaTime)
+        {
+            if (_vrmInstance == null)
+            {
+                return;
+            }
+
+            if (_activeMotion != null)
+            {
+                _activeMotionTime = Mathf.Repeat(_activeMotionTime + deltaTime, _activeMotion.DurationSeconds);
+                _activeMotion.TimeControl.SetTime(_activeMotionTime);
+                ApplyExpressionOverride();
+                _vrmInstance.Runtime.VrmAnimation = _activeMotion.AnimationInstance;
+            }
+            else
+            {
+                _vrmInstance.Runtime.VrmAnimation = null;
+                ApplyExpressionOverride();
+            }
+
+            _vrmInstance.Runtime.Process();
+        }
+
+        private void RebuildExpressionCatalog()
+        {
+            _expressionKeys.Clear();
+            if (_vrmInstance?.Vrm?.Expression == null)
+            {
+                return;
+            }
+
+            foreach (var (preset, clip) in _vrmInstance.Vrm.Expression.Clips)
+            {
+                var expressionKey = new ExpressionKey(preset, clip.name);
+                RegisterExpressionKey(expressionKey.Name, expressionKey);
+            }
+
+            foreach (var pair in BuiltinExpressionAliases)
+            {
+                if (!_expressionKeys.ContainsKey(pair.Key))
+                {
+                    _expressionKeys[pair.Key] = pair.Value;
+                }
+            }
+        }
+
+        private void RegisterExpressionKey(string name, ExpressionKey expressionKey)
+        {
+            var normalized = AliasRegistry.Normalize(name);
+            if (string.IsNullOrWhiteSpace(normalized))
+            {
+                return;
+            }
+
+            _expressionKeys[normalized] = expressionKey;
+        }
+
+        private bool TryResolveExpressionKey(string rawName, out ExpressionKey expressionKey)
+        {
+            expressionKey = default;
+            var normalized = AliasRegistry.Normalize(rawName);
+            return !string.IsNullOrWhiteSpace(normalized) && _expressionKeys.TryGetValue(normalized, out expressionKey);
+        }
+
+        private void ClearExpressionCatalog()
+        {
+            _activeExpression = null;
+            _expressionKeys.Clear();
+        }
+
+        private void ApplyExpressionOverride()
+        {
+            if (_activeMotion != null)
+            {
+                if (!_activeExpression.HasValue)
+                {
+                    return;
+                }
+
+                foreach (var setter in _activeMotion.AnimationInstance.ExpressionSetterMap.Values)
+                {
+                    setter(0f);
+                }
+
+                if (_activeMotion.AnimationInstance.ExpressionSetterMap.TryGetValue(_activeExpression.Value, out var motionSetter))
+                {
+                    motionSetter(1f);
+                }
+
+                return;
+            }
+
+            if (_vrmInstance == null || !_activeExpression.HasValue)
+            {
+                return;
+            }
+
+            foreach (var expressionKey in _expressionKeys.Values)
+            {
+                _vrmInstance.Runtime.Expression.SetWeight(expressionKey, 0f);
+            }
+
+            _vrmInstance.Runtime.Expression.SetWeight(_activeExpression.Value, 1f);
+        }
+
+        private void RebindCurrentMotion()
+        {
+            if (_vrmInstance == null)
+            {
+                return;
+            }
+
+            if (_loadedMotions.TryGetValue(AliasRegistry.Normalize(_currentMotion), out var motion))
+            {
+                if (_activeMotion != null && ReferenceEquals(_activeMotion, motion))
+                {
+                    _activeMotionTime = 0f;
+                    return;
+                }
+
+                StopActiveMotion();
+                _activeMotion = motion;
+                _activeMotionTime = 0f;
+                _activeMotion.TimeControl.OnControlTimeStart();
+                _activeMotion.AnimationInstance.ShowBoxMan(false);
+                return;
+            }
+
+            StopActiveMotion();
+        }
+
+        private void StopActiveMotion()
+        {
+            if (_activeMotion != null)
+            {
+                _activeMotion.TimeControl.OnControlTimeStop();
+                _activeMotion = null;
+                _activeMotionTime = 0f;
+            }
+
+            if (_vrmInstance != null)
+            {
+                _vrmInstance.Runtime.VrmAnimation = null;
+            }
+        }
+
+        private void ClearLoadedMotions()
+        {
+            StopActiveMotion();
+            foreach (var motion in _loadedMotions.Values)
+            {
+                motion.GltfInstance.Dispose();
+            }
+
+            _loadedMotions.Clear();
+        }
+
+        private void UpdateHitboxForPlaceholder()
+        {
+            if (_hitbox == null)
+            {
+                return;
+            }
+
+            _hitbox.center = new Vector3(0f, 1.6f, 0f);
+            _hitbox.size = new Vector3(1.6f, 3.4f, 1.4f);
+        }
+
+        private void UpdateHitboxForLoadedCharacter()
+        {
+            if (_hitbox == null || _vrmInstance == null)
+            {
+                return;
+            }
+
+            var renderers = _vrmInstance.GetComponentsInChildren<Renderer>();
+            if (renderers.Length == 0)
+            {
+                UpdateHitboxForPlaceholder();
+                return;
+            }
+
+            var bounds = renderers[0].bounds;
+            for (var i = 1; i < renderers.Length; i++)
+            {
+                bounds.Encapsulate(renderers[i].bounds);
+            }
+
+            var localCenter = _root.InverseTransformPoint(bounds.center);
+            _hitbox.center = localCenter;
+            _hitbox.size = new Vector3(
+                Mathf.Max(bounds.size.x, 0.6f),
+                Mathf.Max(bounds.size.y, 1.4f),
+                Mathf.Max(bounds.size.z, 0.4f));
         }
 
         private void UpdateDisplayVisibility()
@@ -334,6 +707,11 @@ namespace Yuukei.Runtime
 
             var shouldRender = _isVisible && (displayIndex < 0 || _allowedDisplayIndices.Count == 0 || _allowedDisplayIndices.Contains(displayIndex));
             _root.gameObject.SetActive(shouldRender);
+        }
+
+        private void OnDestroy()
+        {
+            ClearLoadedMotions();
         }
     }
 }

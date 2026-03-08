@@ -80,6 +80,7 @@ namespace Yuukei.Runtime
             _inputContextMonitor.Initialize(_desktopAdapter, _windowController, _mascotRuntime);
             _inputContextMonitor.EventRaised += OnRuntimeEventRaised;
             _desktopAdapter.ApplyShortcuts(_persistenceStore.Data.AppState.ShortcutConfig);
+            _desktopAdapter.UpdateShellState(BuildShellState());
 
             _settingsWindow.Initialize(
                 CloseSettingsAsync,
@@ -117,7 +118,7 @@ namespace Yuukei.Runtime
 
         private void OnApplicationQuit()
         {
-            SaveStateOnExitAsync().Forget();
+            SaveStateOnExitAsync().AsTask().GetAwaiter().GetResult();
         }
 
         private void OnDestroy()
@@ -188,6 +189,7 @@ namespace Yuukei.Runtime
             }
 
             await _mascotRuntime.LoadCharacterAsync(content.CharacterPath, cancellationToken);
+            await _mascotRuntime.LoadMotionsAsync(content.MotionPaths, cancellationToken);
             _speechBubbleController.ApplyTheme(
                 content.TexturePaths.TryGetValue("speechBubble.background", out var backgroundPath) ? backgroundPath : string.Empty,
                 content.TexturePaths.TryGetValue("speechBubble.tail", out var tailPath) ? tailPath : string.Empty);
@@ -208,6 +210,8 @@ namespace Yuukei.Runtime
             {
                 ApplyMascotMode();
             }
+
+            UpdateShellState();
         }
 
         private async UniTask RaiseAppStartedAsync(bool firstLaunch, CancellationToken cancellationToken)
@@ -305,6 +309,7 @@ namespace Yuukei.Runtime
         {
             _isSettingsVisible = true;
             ApplySettingsMode();
+            UpdateShellState();
             RefreshSettingsWindow();
             return UniTask.CompletedTask;
         }
@@ -313,6 +318,7 @@ namespace Yuukei.Runtime
         {
             _isSettingsVisible = false;
             ApplyMascotMode();
+            UpdateShellState();
             RefreshSettingsWindow();
             return UniTask.CompletedTask;
         }
@@ -322,12 +328,14 @@ namespace Yuukei.Runtime
             await _packageManager.SwitchActivePackageAsync(packageId, _lifetime.Token);
             _daihonBridge.CancelAndClear();
             await ApplyCurrentPackageAsync(_lifetime.Token);
+            await FlushPendingSaveAsync(_lifetime.Token);
         }
 
         private async UniTask DeletePackageAsync(string packageId)
         {
             await _packageManager.DeletePackageAsync(packageId, _lifetime.Token);
             await ApplyCurrentPackageAsync(_lifetime.Token);
+            await FlushPendingSaveAsync(_lifetime.Token);
         }
 
         private async UniTask ImportPackageAsync(string folderPath)
@@ -341,16 +349,18 @@ namespace Yuukei.Runtime
         private async UniTask SetTemporarilyDisabledAsync(bool disabled)
         {
             _persistenceStore.UpdateAppState(state => state.IsTemporarilyDisabled = disabled);
-            await _persistenceStore.SaveAsync(_lifetime.Token);
+            _persistenceStore.RequestSave();
             _daihonBridge.SetTemporarilyDisabled(disabled);
             _inputContextMonitor.SetInputEnabled(!disabled && !_isSettingsVisible && !_persistenceStore.Data.AppState.IsTemporarilyHidden);
+            UpdateShellState();
+            await FlushPendingSaveAsync(_lifetime.Token);
             RefreshSettingsWindow();
         }
 
         private async UniTask SetTemporarilyHiddenAsync(bool hidden)
         {
             _persistenceStore.UpdateAppState(state => state.IsTemporarilyHidden = hidden);
-            await _persistenceStore.SaveAsync(_lifetime.Token);
+            _persistenceStore.RequestSave();
             _mascotRuntime.SetVisible(!hidden && !_isSettingsVisible);
             if (hidden)
             {
@@ -358,6 +368,8 @@ namespace Yuukei.Runtime
             }
 
             _inputContextMonitor.SetInputEnabled(!hidden && !_isSettingsVisible && !_persistenceStore.Data.AppState.IsTemporarilyDisabled);
+            UpdateShellState();
+            await FlushPendingSaveAsync(_lifetime.Token);
             RefreshSettingsWindow();
         }
 
@@ -365,7 +377,8 @@ namespace Yuukei.Runtime
         {
             _persistenceStore.UpdateAppState(state => state.ShortcutConfig = shortcutConfig ?? new ShortcutConfigData());
             _desktopAdapter.ApplyShortcuts(_persistenceStore.Data.AppState.ShortcutConfig);
-            await _persistenceStore.SaveAsync(_lifetime.Token);
+            _persistenceStore.RequestSave();
+            await FlushPendingSaveAsync(_lifetime.Token);
             RefreshSettingsWindow();
         }
 
@@ -413,6 +426,7 @@ namespace Yuukei.Runtime
         {
             if (_persistenceStore != null)
             {
+                await _persistenceStore.FlushPendingSaveAsync(CancellationToken.None);
                 await _persistenceStore.SaveAsync(CancellationToken.None);
             }
         }
@@ -458,7 +472,29 @@ namespace Yuukei.Runtime
 
         private void RefreshSettingsWindow()
         {
-            _settingsWindow?.Refresh(_persistenceStore, _packageManager, _pluginLoader, _apiKeyConfigured);
+            _settingsWindow?.Refresh(_persistenceStore, _packageManager, _pluginLoader, _apiKeyConfigured, _desktopAdapter?.GetShortcutStatuses());
+            UpdateShellState();
+        }
+
+        private AppShellState BuildShellState()
+        {
+            return new AppShellState(
+                _isSettingsVisible,
+                _persistenceStore?.Data?.AppState?.IsTemporarilyDisabled ?? false,
+                _persistenceStore?.Data?.AppState?.IsTemporarilyHidden ?? false);
+        }
+
+        private void UpdateShellState()
+        {
+            _desktopAdapter?.UpdateShellState(BuildShellState());
+        }
+
+        private async UniTask FlushPendingSaveAsync(CancellationToken cancellationToken)
+        {
+            if (_persistenceStore != null)
+            {
+                await _persistenceStore.FlushPendingSaveAsync(cancellationToken);
+            }
         }
     }
 }

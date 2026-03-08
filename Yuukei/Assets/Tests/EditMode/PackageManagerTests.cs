@@ -4,6 +4,7 @@ using System.IO;
 using System.Linq;
 using System.Reflection;
 using System.Threading;
+using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
@@ -15,7 +16,7 @@ namespace Yuukei.Tests.EditMode
     public sealed class PackageManagerTests
     {
         [Test]
-        public void ResolveActiveContent_UsesManifestOrderAndWholeArrayOverride()
+        public async Task ResolveActiveContent_UsesManifestOrderAndWholeArrayOverride()
         {
             var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-package-" + Guid.NewGuid().ToString("N"));
             var packageRoot = Path.Combine(tempDirectory, "package");
@@ -44,8 +45,8 @@ namespace Yuukei.Tests.EditMode
             {
                 var store = new PersistenceStore(Path.Combine(tempDirectory, "save.json"));
                 var packageManager = new PackageManager(store, packageRootDirectory: packageRoot);
-                packageManager.ReloadInstalledPackagesAsync().GetAwaiter().GetResult();
-                packageManager.SwitchActivePackageAsync("guid").GetAwaiter().GetResult();
+                await packageManager.ReloadInstalledPackagesAsync();
+                await packageManager.SwitchActivePackageAsync("guid");
 
                 var manifestSelection = packageManager.GetResolvedActiveContent();
                 Assert.That(manifestSelection.DaihonPaths, Is.EqualTo(new[]
@@ -81,7 +82,7 @@ namespace Yuukei.Tests.EditMode
         }
 
         [Test]
-        public void ValidateActivePackage_ReportsMissingDaihonsIndividually()
+        public async Task ValidateActivePackage_ReportsMissingDaihonsIndividually()
         {
             var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-package-" + Guid.NewGuid().ToString("N"));
             var packageRoot = Path.Combine(tempDirectory, "package");
@@ -106,14 +107,86 @@ namespace Yuukei.Tests.EditMode
             {
                 var store = new PersistenceStore(Path.Combine(tempDirectory, "save.json"));
                 var packageManager = new PackageManager(store, packageRootDirectory: packageRoot);
-                packageManager.ReloadInstalledPackagesAsync().GetAwaiter().GetResult();
-                packageManager.SwitchActivePackageAsync("guid").GetAwaiter().GetResult();
+                await packageManager.ReloadInstalledPackagesAsync();
+                await packageManager.SwitchActivePackageAsync("guid");
 
                 var report = packageManager.ValidateActivePackage();
 
                 Assert.That(report.Warnings.Count, Is.EqualTo(2));
                 Assert.That(report.Warnings[0], Does.Contain("Missing Daihon script"));
                 Assert.That(report.Warnings[1], Does.Contain("Missing Daihon script"));
+            }
+            finally
+            {
+                Directory.Delete(tempDirectory, true);
+            }
+        }
+
+        [Test]
+        public async Task EnsureStarterPackageAsync_UsesProvidedExampleSource()
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-starter-" + Guid.NewGuid().ToString("N"));
+            var packageRoot = Path.Combine(tempDirectory, "package");
+            var exampleRoot = Path.Combine(tempDirectory, "examples", "yuukei_default_package");
+            Directory.CreateDirectory(Path.Combine(exampleRoot, "daihon"));
+            File.WriteAllText(Path.Combine(exampleRoot, "character.vrm"), string.Empty);
+            File.WriteAllText(Path.Combine(exampleRoot, "daihon", "main.daihon"), "## Main\n### Scene\n合図: ＠app_started\n「starter」");
+            File.WriteAllText(
+                Path.Combine(exampleRoot, "manifest.json"),
+                BuildManifestJson("yuukei", "v0.0.1", "0f479418-2a7a-4c1d-93d8-b6cf7af6bfc0", "character.vrm", "daihon/main.daihon"));
+
+            try
+            {
+                var store = new PersistenceStore(Path.Combine(tempDirectory, "save.json"));
+                var packageManager = new PackageManager(
+                    store,
+                    packageRootDirectory: packageRoot,
+                    starterPackageSourceDirectory: exampleRoot);
+
+                await packageManager.EnsureStarterPackageAsync();
+                await packageManager.ReloadInstalledPackagesAsync();
+
+                Assert.That(packageManager.InstalledPackages.Count, Is.EqualTo(1));
+                Assert.That(packageManager.InstalledPackages[0].PackageId, Is.EqualTo("0f479418-2a7a-4c1d-93d8-b6cf7af6bfc0"));
+                Assert.That(File.Exists(Path.Combine(packageManager.InstalledPackages[0].RootDirectory, "manifest.json")), Is.True);
+                Assert.That(File.Exists(Path.Combine(packageManager.InstalledPackages[0].RootDirectory, "daihon", "main.daihon")), Is.True);
+            }
+            finally
+            {
+                Directory.Delete(tempDirectory, true);
+            }
+        }
+
+        [Test]
+        public async Task SwitchActivePackageAsync_ResetsOverrides()
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-switch-" + Guid.NewGuid().ToString("N"));
+            var packageRoot = Path.Combine(tempDirectory, "package");
+            var firstInstallRoot = Path.Combine(packageRoot, "creator-v1-first");
+            var secondInstallRoot = Path.Combine(packageRoot, "creator-v1-second");
+            Directory.CreateDirectory(firstInstallRoot);
+            Directory.CreateDirectory(secondInstallRoot);
+
+            File.WriteAllText(Path.Combine(firstInstallRoot, "manifest.json"), BuildManifestJson("creator", "v1", "first", "character.vrm"));
+            File.WriteAllText(Path.Combine(secondInstallRoot, "manifest.json"), BuildManifestJson("creator", "v1", "second", "character.vrm"));
+
+            try
+            {
+                var store = new PersistenceStore(Path.Combine(tempDirectory, "save.json"));
+                var packageManager = new PackageManager(store, packageRootDirectory: packageRoot);
+                await packageManager.ReloadInstalledPackagesAsync();
+                await packageManager.SwitchActivePackageAsync("first");
+
+                store.SetOverrides(new OverrideSelections
+                {
+                    Character = "override.vrm",
+                    Daihon = new List<string> { "override.daihon" },
+                });
+
+                await packageManager.SwitchActivePackageAsync("second");
+
+                Assert.That(store.Data.Overrides.Character, Is.Empty);
+                Assert.That(store.Data.Overrides.Daihon, Is.Empty);
             }
             finally
             {
@@ -140,7 +213,7 @@ $@"{{
     public sealed class DaihonBridgeTests
     {
         [Test]
-        public void RaiseEventAsync_DispatchesScriptsInOrder_AndResetsTransientStateBetweenScripts()
+        public async Task RaiseEventAsync_DispatchesScriptsInOrder_AndResetsTransientStateBetweenScripts()
         {
             var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-daihon-" + Guid.NewGuid().ToString("N"));
             Directory.CreateDirectory(tempDirectory);
@@ -183,13 +256,13 @@ _temp=「from defaults」
                 var bridge = new DaihonBridge(aliasRegistry, variableStore, speechBubbleController, choiceOverlayController, mascotRuntime);
                 speechBubbleController.Initialize(canvas, camera, () => Vector3.zero);
                 choiceOverlayController.Initialize(canvas);
-                bridge.ApplyActivePackageAsync(
+                await bridge.ApplyActivePackageAsync(
                     new PackageContentSelection
                     {
                         DaihonPaths = new List<string> { firstScriptPath, secondScriptPath },
                     },
                     new PackageAliasManifest(),
-                    CancellationToken.None).GetAwaiter().GetResult();
+                    CancellationToken.None);
 
                 var task = bridge.RaiseEventAsync(
                     "app_started",
@@ -197,13 +270,13 @@ _temp=「from defaults」
                     {
                         ["_event_character_id"] = "mascot-01",
                     },
-                    CancellationToken.None);
+                    CancellationToken.None).AsTask();
 
                 Assert.That(SpinWait.SpinUntil(() => IsChoiceOverlayVisible(choiceOverlayController), TimeSpan.FromSeconds(1)), Is.True);
                 Assert.That(GetSpeechText(speechBubbleController), Is.EqualTo("waiting"));
 
                 choiceOverlayController.CancelCurrent();
-                task.GetAwaiter().GetResult();
+                await task;
 
                 Assert.That(GetSpeechText(speechBubbleController), Is.EqualTo("mascot-01|from defaults"));
             }

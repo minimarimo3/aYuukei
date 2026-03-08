@@ -18,13 +18,19 @@ namespace Yuukei.Runtime
         private readonly PersistenceStore _persistenceStore;
         private readonly IPackageContentResolver _contentResolver;
         private readonly string _packageRootDirectory;
+        private readonly string _starterPackageSourceDirectory;
         private readonly List<ResolvedPackage> _installedPackages = new List<ResolvedPackage>();
 
-        public PackageManager(PersistenceStore persistenceStore, IPackageContentResolver contentResolver = null, string packageRootDirectory = null)
+        public PackageManager(
+            PersistenceStore persistenceStore,
+            IPackageContentResolver contentResolver = null,
+            string packageRootDirectory = null,
+            string starterPackageSourceDirectory = null)
         {
             _persistenceStore = persistenceStore;
             _contentResolver = contentResolver ?? this;
             _packageRootDirectory = packageRootDirectory ?? Path.Combine(Application.persistentDataPath, "package");
+            _starterPackageSourceDirectory = starterPackageSourceDirectory ?? GetDefaultStarterPackageSourceDirectory();
         }
 
         public event Action<ResolvedPackage> ActivePackageChanged;
@@ -54,6 +60,11 @@ namespace Yuukei.Runtime
         {
             var starterDirectory = GetInstallDirectory(StarterCreator, StarterVersion, StarterPackageId);
             if (Directory.Exists(starterDirectory) && File.Exists(Path.Combine(starterDirectory, "manifest.json")))
+            {
+                return;
+            }
+
+            if (TryInstallStarterPackageFromExample(starterDirectory))
             {
                 return;
             }
@@ -135,8 +146,9 @@ namespace Yuukei.Runtime
             ActivePackage = package;
             _persistenceStore.SetActivePackageId(package.PackageId);
             _persistenceStore.ResetOverrides();
-            await _persistenceStore.SaveAsync(cancellationToken);
+            _persistenceStore.RequestSave();
             ActivePackageChanged?.Invoke(package);
+            await UniTask.CompletedTask;
         }
 
         public async UniTask<bool> ImportPackageFromFolderAsync(string folderPath, CancellationToken cancellationToken = default)
@@ -291,6 +303,48 @@ namespace Yuukei.Runtime
         private string GetInstallDirectory(string creator, string version, string guid)
         {
             return Path.Combine(_packageRootDirectory, $"{creator}-{version}-{guid}");
+        }
+
+        private bool TryInstallStarterPackageFromExample(string destinationDirectory)
+        {
+            if (string.IsNullOrWhiteSpace(_starterPackageSourceDirectory) || !Directory.Exists(_starterPackageSourceDirectory))
+            {
+                return false;
+            }
+
+            try
+            {
+                if (Directory.Exists(destinationDirectory))
+                {
+                    Directory.Delete(destinationDirectory, true);
+                }
+
+                CopyDirectory(_starterPackageSourceDirectory, destinationDirectory);
+                return true;
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"[PackageManager] Failed to copy starter package example from '{_starterPackageSourceDirectory}'. Falling back to generated package. {exception.Message}");
+                return false;
+            }
+        }
+
+        private static string GetDefaultStarterPackageSourceDirectory()
+        {
+            var assetsDirectory = Application.dataPath;
+            if (string.IsNullOrWhiteSpace(assetsDirectory))
+            {
+                return string.Empty;
+            }
+
+            var projectRoot = Directory.GetParent(assetsDirectory)?.FullName;
+            var repositoryRoot = Directory.GetParent(projectRoot ?? string.Empty)?.FullName;
+            if (string.IsNullOrWhiteSpace(repositoryRoot))
+            {
+                return string.Empty;
+            }
+
+            return Path.Combine(repositoryRoot, "examples", "yuukei_default_package");
         }
 
         private static string GetDictionaryValue(IReadOnlyDictionary<string, string> dictionary, string key)

@@ -31,6 +31,21 @@ namespace Yuukei.Tests.EditMode
         }
 
         [Test]
+        public void Resolution_TrimsWhitespace_AndKeepsNonAsciiExact()
+        {
+            var registry = new AliasRegistry();
+
+            Assert.That(registry.TryResolveEventName("  起動時  ", out var eventName), Is.True);
+            Assert.That(eventName, Is.EqualTo("app_started"));
+
+            Assert.That(registry.TryResolveFunctionName("  show_choices  ", out var functionName), Is.True);
+            Assert.That(functionName, Is.EqualTo("show_choices"));
+
+            Assert.That(registry.TryResolveEventName("クリック ", out var clickedEvent), Is.True);
+            Assert.That(clickedEvent, Is.EqualTo("character_clicked"));
+        }
+
+        [Test]
         public void PackageAliases_OverrideBuiltins_AndLogCollision()
         {
             var registry = new AliasRegistry();

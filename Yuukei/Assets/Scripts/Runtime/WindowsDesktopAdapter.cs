@@ -1,11 +1,10 @@
 using System;
-using System.ComponentModel;
 using System.Collections.Generic;
+using System.ComponentModel;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 using UnityEngine;
-using UnityEngine.InputSystem;
 
 namespace Yuukei.Runtime
 {
@@ -13,7 +12,21 @@ namespace Yuukei.Runtime
     {
         private readonly Dictionary<ShortcutAction, ShortcutBinding> _shortcuts = new Dictionary<ShortcutAction, ShortcutBinding>();
         private readonly Dictionary<ShortcutAction, bool> _shortcutLatch = new Dictionary<ShortcutAction, bool>();
+        private readonly Dictionary<ShortcutAction, ShortcutRegistrationStatus> _shortcutStatuses = new Dictionary<ShortcutAction, ShortcutRegistrationStatus>();
         private readonly string _secretDirectory = Path.Combine(Application.persistentDataPath, "secure");
+
+        private IWindowsShellHost _shellHost;
+        private AppShellState _shellState;
+
+        public WindowsDesktopAdapter()
+            : this(null)
+        {
+        }
+
+        internal WindowsDesktopAdapter(IWindowsShellHost shellHost)
+        {
+            _shellHost = shellHost;
+        }
 
         public event Action<TrayCommand> TrayCommandRequested;
         public event Action<ShortcutAction> ShortcutTriggered;
@@ -21,43 +34,126 @@ namespace Yuukei.Runtime
         public void Initialize()
         {
             Directory.CreateDirectory(_secretDirectory);
+
+            if (_shellHost == null)
+            {
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
+                _shellHost = new WindowsNativeShellHost();
+#endif
+            }
+
+            if (_shellHost == null)
+            {
+                return;
+            }
+
+            try
+            {
+                _shellHost.TrayCommandRequested += OnShellTrayCommandRequested;
+                _shellHost.ShortcutTriggered += OnShellShortcutTriggered;
+                _shellHost.Initialize();
+                _shellHost.ApplyShellState(_shellState);
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"[WindowsDesktopAdapter] Native shell host initialization failed. {exception.Message}");
+                _shellHost.TrayCommandRequested -= OnShellTrayCommandRequested;
+                _shellHost.ShortcutTriggered -= OnShellShortcutTriggered;
+                _shellHost = null;
+            }
         }
 
         public void Shutdown()
         {
+            if (_shellHost == null)
+            {
+                return;
+            }
+
+            _shellHost.TrayCommandRequested -= OnShellTrayCommandRequested;
+            _shellHost.ShortcutTriggered -= OnShellShortcutTriggered;
+            _shellHost.Shutdown();
+            _shellHost = null;
         }
 
         public void Tick()
         {
-            if (!Application.isFocused || Keyboard.current == null)
+            _shellHost?.Tick();
+
+            if (_shellHost != null && _shellHost.SupportsGlobalHotkeys)
             {
-                ResetShortcutLatch();
                 return;
             }
 
-            foreach (var pair in _shortcuts)
-            {
-                var active = pair.Value.IsPressed();
-                if (active && (!_shortcutLatch.TryGetValue(pair.Key, out var latched) || !latched))
-                {
-                    _shortcutLatch[pair.Key] = true;
-                    ShortcutTriggered?.Invoke(pair.Key);
-                }
-                else if (!active)
-                {
-                    _shortcutLatch[pair.Key] = false;
-                }
-            }
+            PollForegroundShortcuts();
         }
 
         public void ApplyShortcuts(ShortcutConfigData shortcutConfig)
         {
             _shortcuts.Clear();
             _shortcutLatch.Clear();
+            _shortcutStatuses.Clear();
 
-            RegisterShortcut(ShortcutAction.ToggleDisabled, shortcutConfig?.ToggleDisabled);
-            RegisterShortcut(ShortcutAction.ToggleHidden, shortcutConfig?.ToggleHidden);
-            RegisterShortcut(ShortcutAction.OpenSettings, shortcutConfig?.OpenSettings);
+            var rawBindings = new Dictionary<ShortcutAction, string>
+            {
+                [ShortcutAction.ToggleDisabled] = shortcutConfig?.ToggleDisabled ?? string.Empty,
+                [ShortcutAction.ToggleHidden] = shortcutConfig?.ToggleHidden ?? string.Empty,
+                [ShortcutAction.OpenSettings] = shortcutConfig?.OpenSettings ?? string.Empty,
+            };
+
+            var validBindings = new Dictionary<ShortcutAction, ShortcutBinding>();
+            foreach (var pair in rawBindings)
+            {
+                if (string.IsNullOrWhiteSpace(pair.Value))
+                {
+                    _shortcutStatuses[pair.Key] = new ShortcutRegistrationStatus(string.Empty, false, "未設定");
+                    continue;
+                }
+
+                if (!ShortcutBinding.TryParse(pair.Value, out var binding))
+                {
+                    _shortcutStatuses[pair.Key] = new ShortcutRegistrationStatus(pair.Value, false, "無効なショートカットです");
+                    continue;
+                }
+
+                _shortcuts[pair.Key] = binding;
+                _shortcutLatch[pair.Key] = false;
+                validBindings[pair.Key] = binding;
+            }
+
+            if (_shellHost != null && _shellHost.SupportsGlobalHotkeys)
+            {
+                var nativeStatuses = _shellHost.ApplyShortcuts(validBindings);
+                foreach (var pair in validBindings)
+                {
+                    if (nativeStatuses.TryGetValue(pair.Key, out var status))
+                    {
+                        _shortcutStatuses[pair.Key] = status;
+                    }
+                    else
+                    {
+                        _shortcutStatuses[pair.Key] = new ShortcutRegistrationStatus(pair.Value.OriginalText, false, "グローバルホットキーを登録できませんでした");
+                    }
+                }
+
+                return;
+            }
+
+            foreach (var pair in validBindings)
+            {
+                _shortcutStatuses[pair.Key] = new ShortcutRegistrationStatus(pair.Value.OriginalText, true, "エディタではフォーカス中のみ有効");
+            }
+        }
+
+        public void UpdateShellState(AppShellState state)
+        {
+            _shellState = state;
+            _shellHost?.ApplyShellState(state);
+        }
+
+        public IReadOnlyDictionary<ShortcutAction, ShortcutRegistrationStatus> GetShortcutStatuses()
+        {
+            return new Dictionary<ShortcutAction, ShortcutRegistrationStatus>(_shortcutStatuses);
         }
 
         public RectInt GetVirtualDesktopBounds()
@@ -86,7 +182,7 @@ namespace Yuukei.Runtime
 
         public IReadOnlyList<DesktopDisplayInfo> GetDisplays()
         {
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             var list = new List<DesktopDisplayInfo>();
             var index = 0;
             EnumDisplayMonitors(IntPtr.Zero, IntPtr.Zero, (monitor, _, _, _) =>
@@ -116,7 +212,7 @@ namespace Yuukei.Runtime
 
         public int GetForegroundDisplayIndex()
         {
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             var window = GetForegroundWindow();
             if (window == IntPtr.Zero)
             {
@@ -151,7 +247,7 @@ namespace Yuukei.Runtime
 
         public bool IsForegroundWindowFullscreen()
         {
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             var window = GetForegroundWindow();
             if (window == IntPtr.Zero || !GetWindowRect(window, out var windowRect))
             {
@@ -179,7 +275,7 @@ namespace Yuukei.Runtime
 
         public float GetGlobalIdleSeconds()
         {
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
             var inputInfo = new LastInputInfo
             {
                 cbSize = (uint)Marshal.SizeOf<LastInputInfo>(),
@@ -209,7 +305,7 @@ namespace Yuukei.Runtime
             try
             {
                 var encrypted = File.ReadAllBytes(path);
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
                 var bytes = UnprotectBytes(encrypted);
 #else
                 var bytes = encrypted;
@@ -230,7 +326,7 @@ namespace Yuukei.Runtime
             {
                 Directory.CreateDirectory(_secretDirectory);
                 var bytes = Encoding.UTF8.GetBytes(value ?? string.Empty);
-#if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+#if UNITY_STANDALONE_WIN && !UNITY_EDITOR
                 bytes = ProtectBytes(bytes);
 #endif
                 File.WriteAllBytes(GetSecretPath(key), bytes);
@@ -255,13 +351,37 @@ namespace Yuukei.Runtime
             Application.OpenURL(url);
         }
 
-        private void RegisterShortcut(ShortcutAction action, string shortcutText)
+        private void PollForegroundShortcuts()
         {
-            if (ShortcutBinding.TryParse(shortcutText, out var binding))
+            if (!Application.isFocused)
             {
-                _shortcuts[action] = binding;
-                _shortcutLatch[action] = false;
+                ResetShortcutLatch();
+                return;
             }
+
+            foreach (var pair in _shortcuts)
+            {
+                var active = pair.Value.IsPressed();
+                if (active && (!_shortcutLatch.TryGetValue(pair.Key, out var latched) || !latched))
+                {
+                    _shortcutLatch[pair.Key] = true;
+                    ShortcutTriggered?.Invoke(pair.Key);
+                }
+                else if (!active)
+                {
+                    _shortcutLatch[pair.Key] = false;
+                }
+            }
+        }
+
+        private void OnShellTrayCommandRequested(TrayCommand command)
+        {
+            TrayCommandRequested?.Invoke(command);
+        }
+
+        private void OnShellShortcutTriggered(ShortcutAction action)
+        {
+            ShortcutTriggered?.Invoke(action);
         }
 
         private void ResetShortcutLatch()
@@ -372,120 +492,6 @@ namespace Yuukei.Runtime
             }
         }
 #endif
-
-        private readonly struct ShortcutBinding
-        {
-            public ShortcutBinding(bool ctrl, bool shift, bool alt, Key key)
-            {
-                Ctrl = ctrl;
-                Shift = shift;
-                Alt = alt;
-                Key = key;
-            }
-
-            public bool Ctrl { get; }
-            public bool Shift { get; }
-            public bool Alt { get; }
-            public Key Key { get; }
-
-            public bool IsPressed()
-            {
-                var keyboard = Keyboard.current;
-                if (keyboard == null)
-                {
-                    return false;
-                }
-
-                if (Ctrl && !(keyboard.leftCtrlKey.isPressed || keyboard.rightCtrlKey.isPressed))
-                {
-                    return false;
-                }
-
-                if (Shift && !(keyboard.leftShiftKey.isPressed || keyboard.rightShiftKey.isPressed))
-                {
-                    return false;
-                }
-
-                if (Alt && !(keyboard.leftAltKey.isPressed || keyboard.rightAltKey.isPressed))
-                {
-                    return false;
-                }
-
-                var keyControl = keyboard[Key];
-                return keyControl != null && keyControl.isPressed;
-            }
-
-            public static bool TryParse(string text, out ShortcutBinding binding)
-            {
-                binding = default;
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    return false;
-                }
-
-                var ctrl = false;
-                var shift = false;
-                var alt = false;
-                Key? key = null;
-
-                foreach (var rawPart in text.Split('+'))
-                {
-                    var part = rawPart.Trim();
-                    if (part.Equals("Ctrl", StringComparison.OrdinalIgnoreCase) || part.Equals("Control", StringComparison.OrdinalIgnoreCase))
-                    {
-                        ctrl = true;
-                        continue;
-                    }
-
-                    if (part.Equals("Shift", StringComparison.OrdinalIgnoreCase))
-                    {
-                        shift = true;
-                        continue;
-                    }
-
-                    if (part.Equals("Alt", StringComparison.OrdinalIgnoreCase))
-                    {
-                        alt = true;
-                        continue;
-                    }
-
-                    key = ParseKey(part);
-                }
-
-                if (!key.HasValue)
-                {
-                    return false;
-                }
-
-                binding = new ShortcutBinding(ctrl, shift, alt, key.Value);
-                return true;
-            }
-
-            private static Key? ParseKey(string text)
-            {
-                if (string.IsNullOrWhiteSpace(text))
-                {
-                    return null;
-                }
-
-                if (text == ";")
-                {
-                    return Key.Semicolon;
-                }
-
-                if (text.Length == 1 && char.IsLetter(text[0]))
-                {
-                    return Enum.TryParse<Key>(text.ToUpperInvariant(), out var parsed) ? parsed : null;
-                }
-
-                if (Enum.TryParse<Key>(text, true, out var key))
-                {
-                    return key;
-                }
-
-                return null;
-            }
-        }
 
 #if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
         private const int CryptProtectUiForbidden = 0x1;

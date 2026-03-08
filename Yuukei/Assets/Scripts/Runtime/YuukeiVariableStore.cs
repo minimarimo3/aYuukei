@@ -58,7 +58,7 @@ namespace Yuukei.Runtime
             if (!name.StartsWith("_", StringComparison.Ordinal))
             {
                 _persistenceStore.SetPersistentVariable(name, DaihonValueUtility.ToPersistentObject(value));
-                _persistenceStore.SaveAsync().Forget();
+                _persistenceStore.RequestSave();
             }
         }
 
@@ -73,7 +73,7 @@ namespace Yuukei.Runtime
             if (!name.StartsWith("_", StringComparison.Ordinal))
             {
                 _persistenceStore.SetPersistentVariable(name, DaihonValueUtility.ToPersistentObject(value));
-                _persistenceStore.SaveAsync().Forget();
+                _persistenceStore.RequestSave();
             }
         }
 

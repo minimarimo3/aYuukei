@@ -164,7 +164,10 @@ namespace Yuukei.Runtime
             }
 
             var eventSystemObject = new GameObject("EventSystem", typeof(EventSystem), typeof(InputSystemUIInputModule));
-            DontDestroyOnLoad(eventSystemObject);
+            if (Application.isPlaying)
+            {
+                DontDestroyOnLoad(eventSystemObject);
+            }
         }
 
         private static Button CreateButton(string label, Font font, Action onClick)

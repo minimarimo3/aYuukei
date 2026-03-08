@@ -16,7 +16,9 @@ namespace Yuukei.Runtime
             public PendingEvent(string canonicalName, IReadOnlyDictionary<string, object> context, CancellationToken cancellationToken)
             {
                 CanonicalName = canonicalName;
-                Context = context;
+                Context = context != null
+                    ? new Dictionary<string, object>(context)
+                    : new Dictionary<string, object>();
                 CancellationToken = cancellationToken;
             }
 
@@ -273,7 +275,18 @@ namespace Yuukei.Runtime
                     _variableStore.InjectEventContext(pendingEvent.Context);
                     try
                     {
-                        await _runtime.RunEventAsync(script.Metadata, pendingEvent.CanonicalName, _aliasRegistry, actionHandler, _variableStore, linkedSource.Token);
+                        try
+                        {
+                            await _runtime.RunEventAsync(script.Metadata, pendingEvent.CanonicalName, _aliasRegistry, actionHandler, _variableStore, linkedSource.Token);
+                        }
+                        catch (OperationCanceledException)
+                        {
+                            throw;
+                        }
+                        catch (Exception exception)
+                        {
+                            Debug.LogError($"[DaihonBridge] Script '{script.SourcePath}' failed while executing '{pendingEvent.CanonicalName}'. Skipping remaining work in that script. {exception}");
+                        }
                     }
                     finally
                     {

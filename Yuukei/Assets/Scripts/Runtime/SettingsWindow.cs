@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using Cysharp.Threading.Tasks;
@@ -49,6 +50,7 @@ namespace Yuukei.Runtime
         private PersistenceStore _persistenceStore;
         private PackageManager _packageManager;
         private PluginLoader _pluginLoader;
+        private IReadOnlyDictionary<ShortcutAction, ShortcutRegistrationStatus> _shortcutStatuses;
         private bool _apiKeyConfigured;
 
         private Func<UniTask> _closeRequested;
@@ -184,12 +186,18 @@ namespace Yuukei.Runtime
             }
         }
 
-        public void Refresh(PersistenceStore persistenceStore, PackageManager packageManager, PluginLoader pluginLoader, bool apiKeyConfigured)
+        public void Refresh(
+            PersistenceStore persistenceStore,
+            PackageManager packageManager,
+            PluginLoader pluginLoader,
+            bool apiKeyConfigured,
+            IReadOnlyDictionary<ShortcutAction, ShortcutRegistrationStatus> shortcutStatuses)
         {
             _persistenceStore = persistenceStore;
             _packageManager = packageManager;
             _pluginLoader = pluginLoader;
             _apiKeyConfigured = apiKeyConfigured;
+            _shortcutStatuses = shortcutStatuses;
             Rebuild();
         }
 
@@ -456,6 +464,11 @@ namespace Yuukei.Runtime
             {
                 text = "ショートカットを保存",
             });
+
+            _contentHost.Add(CreateSectionHeader("ショートカット状態"));
+            _contentHost.Add(CreateInfoRow("設定表示", BuildShortcutStatusText(ShortcutAction.OpenSettings)));
+            _contentHost.Add(CreateInfoRow("一時無効化", BuildShortcutStatusText(ShortcutAction.ToggleDisabled)));
+            _contentHost.Add(CreateInfoRow("一時非表示", BuildShortcutStatusText(ShortcutAction.ToggleHidden)));
         }
 
         private void BuildAboutPage()
@@ -550,6 +563,21 @@ namespace Yuukei.Runtime
             var label = new Label(text);
             label.style.marginBottom = 6f;
             return label;
+        }
+
+        private string BuildShortcutStatusText(ShortcutAction action)
+        {
+            if (_shortcutStatuses == null || !_shortcutStatuses.TryGetValue(action, out var status))
+            {
+                return "未確認";
+            }
+
+            if (string.IsNullOrWhiteSpace(status.BindingText))
+            {
+                return status.Message;
+            }
+
+            return $"{status.BindingText} / {status.Message}";
         }
     }
 }

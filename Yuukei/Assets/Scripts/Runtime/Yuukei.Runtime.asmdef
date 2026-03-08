@@ -6,7 +6,8 @@
     "VRM10",
     "UniGLTF",
     "Kirurobo.UniWindowController",
-    "Unity.InputSystem"
+    "Unity.InputSystem",
+    "Unity.Timeline"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],

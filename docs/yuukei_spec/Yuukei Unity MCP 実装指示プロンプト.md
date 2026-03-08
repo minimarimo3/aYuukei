@@ -23,7 +23,6 @@ Yuukei の Unity プロジェクトに対して、Windows MVP として不足し
 - VRM 表情 / モーション連携
 - DaihonBridge と AliasRegistry の整合
 - PackageManager / PersistenceStore の仕様適合
-- 既存実装評価で指摘されたギャップの解消
 
 実装方針:
 - Unity 6000.3.6f1

@@ -14,6 +14,10 @@ namespace Yuukei.Runtime
     {
         private readonly string _saveFilePath;
         private readonly SemaphoreSlim _saveLock = new SemaphoreSlim(1, 1);
+        private readonly object _saveStateLock = new object();
+        private int _requestedSaveVersion;
+        private int _flushedSaveVersion;
+        private bool _saveLoopActive;
 
         public PersistenceStore(string saveFilePath = null)
         {
@@ -29,6 +33,7 @@ namespace Yuukei.Runtime
             if (!File.Exists(_saveFilePath))
             {
                 Data = YuukeiSaveData.CreateDefault();
+                ResetSaveState();
                 return;
             }
 
@@ -59,26 +64,69 @@ namespace Yuukei.Runtime
                 }
 
                 Data = loaded;
+                ResetSaveState();
             }
             catch (Exception exception)
             {
                 Debug.LogWarning($"[PersistenceStore] Failed to load save.json. Recreating defaults. {exception.Message}");
                 Data = YuukeiSaveData.CreateDefault();
+                ResetSaveState();
             }
         }
 
         public async UniTask SaveAsync(CancellationToken cancellationToken = default)
         {
-            Directory.CreateDirectory(Path.GetDirectoryName(_saveFilePath) ?? Application.persistentDataPath);
-            await _saveLock.WaitAsync(cancellationToken);
-            try
+            int targetVersion;
+            lock (_saveStateLock)
             {
-                var json = JsonConvert.SerializeObject(Data, Formatting.Indented);
-                await File.WriteAllTextAsync(_saveFilePath, json, cancellationToken);
+                targetVersion = _requestedSaveVersion;
             }
-            finally
+
+            await SaveCoreAsync(cancellationToken);
+            lock (_saveStateLock)
             {
-                _saveLock.Release();
+                if (_flushedSaveVersion < targetVersion)
+                {
+                    _flushedSaveVersion = targetVersion;
+                }
+            }
+        }
+
+        public void RequestSave()
+        {
+            lock (_saveStateLock)
+            {
+                _requestedSaveVersion++;
+                if (_saveLoopActive)
+                {
+                    return;
+                }
+
+                _saveLoopActive = true;
+            }
+
+            ProcessQueuedSavesAsync().Forget();
+        }
+
+        public async UniTask FlushPendingSaveAsync(CancellationToken cancellationToken = default)
+        {
+            int targetVersion;
+            lock (_saveStateLock)
+            {
+                targetVersion = _requestedSaveVersion;
+                if (targetVersion <= _flushedSaveVersion)
+                {
+                    return;
+                }
+            }
+
+            await SaveCoreAsync(cancellationToken);
+            lock (_saveStateLock)
+            {
+                if (_flushedSaveVersion < targetVersion)
+                {
+                    _flushedSaveVersion = targetVersion;
+                }
             }
         }
 
@@ -136,6 +184,85 @@ namespace Yuukei.Runtime
         public void UpdateAppState(Action<AppStateData> update)
         {
             update?.Invoke(Data.AppState);
+        }
+
+        private async UniTask SaveCoreAsync(CancellationToken cancellationToken)
+        {
+            var directory = Path.GetDirectoryName(_saveFilePath) ?? Application.persistentDataPath;
+            Directory.CreateDirectory(directory);
+            await _saveLock.WaitAsync(cancellationToken);
+            var temporaryPath = _saveFilePath + ".tmp";
+            try
+            {
+                var json = JsonConvert.SerializeObject(Data, Formatting.Indented);
+                await File.WriteAllTextAsync(temporaryPath, json, cancellationToken);
+                if (File.Exists(_saveFilePath))
+                {
+                    File.Replace(temporaryPath, _saveFilePath, null);
+                }
+                else
+                {
+                    File.Move(temporaryPath, _saveFilePath);
+                }
+            }
+            finally
+            {
+                if (File.Exists(temporaryPath))
+                {
+                    File.Delete(temporaryPath);
+                }
+
+                _saveLock.Release();
+            }
+        }
+
+        private async UniTaskVoid ProcessQueuedSavesAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    await UniTask.Yield();
+
+                    int targetVersion;
+                    lock (_saveStateLock)
+                    {
+                        targetVersion = _requestedSaveVersion;
+                        if (targetVersion <= _flushedSaveVersion)
+                        {
+                            _saveLoopActive = false;
+                            return;
+                        }
+                    }
+
+                    await SaveCoreAsync(CancellationToken.None);
+                    lock (_saveStateLock)
+                    {
+                        if (_flushedSaveVersion < targetVersion)
+                        {
+                            _flushedSaveVersion = targetVersion;
+                        }
+                    }
+                }
+            }
+            catch (Exception exception)
+            {
+                Debug.LogWarning($"[PersistenceStore] Background save failed. {exception.Message}");
+                lock (_saveStateLock)
+                {
+                    _saveLoopActive = false;
+                }
+            }
+        }
+
+        private void ResetSaveState()
+        {
+            lock (_saveStateLock)
+            {
+                _requestedSaveVersion = 0;
+                _flushedSaveVersion = 0;
+                _saveLoopActive = false;
+            }
         }
 
         private static object NormalizePersistentValue(object value)
