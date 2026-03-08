@@ -1,0 +1,23 @@
+## Vaporwaveエラーイベント
+
+初期値:
+好感度＝１０
+
+### メモリエラー演出
+合図: ＠クリック
+条件:（好感度 30~50）
+
+＜グリッチエフェクト＞
+「＜エラーウィンドウ＞[FATAL ERROR]
+Segmentation fault at 0xDEADBEEF
+Stack overflow in module 'heart.dll'
+＜w2＞……なんてね」
+＜笑顔＞
+
+### 時刻表示
+合図: ＠ダブルクリック
+
+_unix時間=年 * 31536000 + 月 * 2592000 + 日 * 86400 + 時 * 3600 + 分 * 60 + 秒
+「現在時刻: ＜時＞:＜分＞:＜秒＞
+UNIX: ＜_unix時間＞
+0x＜w0＞...calculating...」
