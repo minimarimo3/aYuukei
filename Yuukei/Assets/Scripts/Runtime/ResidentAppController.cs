@@ -123,9 +123,23 @@ namespace Yuukei.Runtime
 
         private void OnDestroy()
         {
+            ResetWindowController();
             _desktopAdapter?.Shutdown();
             _lifetime?.Cancel();
             _lifetime?.Dispose();
+        }
+
+        private void ResetWindowController()
+        {
+            if (_windowController == null)
+            {
+                return;
+            }
+
+            _windowController.isTopmost = false;
+            _windowController.isTransparent = false;
+            _windowController.isHitTestEnabled = false;
+            _windowController.allowDropFiles = false;
         }
 
         private void EnsureSceneReferences()
