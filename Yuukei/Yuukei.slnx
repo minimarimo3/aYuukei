@@ -5,6 +5,7 @@
   <Project Path="UniGLTF.csproj" />
   <Project Path="UniGLTF.Editor.csproj" />
   <Project Path="UniGLTF.Tests.csproj" />
+  <Project Path="Assembly-CSharp.csproj" />
   <Project Path="UniGLTF.Utils.csproj" />
   <Project Path="VRM10.MToon10.Editor.csproj" />
   <Project Path="UniGLTF.UniUnlit.Editor.csproj" />
