@@ -451,7 +451,8 @@ namespace Yuukei.Runtime
             _windowController.isTopmost = true;
             _windowController.allowDropFiles = true;
             _windowController.isHitTestEnabled = true;
-            _windowController.hitTestType = UniWindowController.HitTestType.Raycast;
+            // Raycastだと設定画面が操作できなくなるため、HitTestType.Opacity
+            _windowController.hitTestType = UniWindowController.HitTestType.Opacity;
 
             if (_desktopAdapter != null)
             {
@@ -472,10 +473,10 @@ namespace Yuukei.Runtime
             _runtimeCanvas.enabled = false;
             _speechBubbleController.Hide();
             _choiceOverlayController.CancelCurrent();
-            _windowController.isTransparent = false;
+            _windowController.isTransparent = true;
             _windowController.isTopmost = false;
             _windowController.allowDropFiles = false;
-            _windowController.isHitTestEnabled = false;
+            _windowController.isHitTestEnabled = true;
             _windowController.windowSize = new Vector2(1220f, 820f);
             _settingsWindow.SetVisible(true);
             _mascotRuntime.SetVisible(false);
