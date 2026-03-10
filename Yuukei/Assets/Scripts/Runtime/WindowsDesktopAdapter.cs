@@ -8,6 +8,10 @@ using UnityEngine;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// Windows環境向けのデスクトッププラットフォームアダプタ。
+    /// トレイアイコン、グローバルホットキー、シークレット保存、ディスプレイ情報取得などを提供する。
+    /// </summary>
     public sealed class WindowsDesktopAdapter : IDesktopPlatformAdapter
     {
         private readonly Dictionary<ShortcutAction, ShortcutBinding> _shortcuts = new Dictionary<ShortcutAction, ShortcutBinding>();
@@ -31,8 +35,10 @@ namespace Yuukei.Runtime
         public event Action<TrayCommand> TrayCommandRequested;
         public event Action<ShortcutAction> ShortcutTriggered;
 
+        /// <summary>ネイティブシェルホストとシークレット保存ディレクトリを初期化する。</summary>
         public void Initialize()
         {
+            Debug.Log("[WindowsDesktopAdapter] 初期化を開始します");
             Directory.CreateDirectory(_secretDirectory);
 
             if (_shellHost == null)
@@ -53,6 +59,7 @@ namespace Yuukei.Runtime
                 _shellHost.ShortcutTriggered += OnShellShortcutTriggered;
                 _shellHost.Initialize();
                 _shellHost.ApplyShellState(_shellState);
+                Debug.Log("[WindowsDesktopAdapter] ネイティブシェルホストの初期化に成功しました");
             }
             catch (Exception exception)
             {
@@ -63,8 +70,10 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>ネイティブシェルホストをシャットダウンし、リソースを解放する。</summary>
         public void Shutdown()
         {
+            Debug.Log("[WindowsDesktopAdapter] シャットダウンを開始します");
             if (_shellHost == null)
             {
                 return;
@@ -88,6 +97,7 @@ namespace Yuukei.Runtime
             PollForegroundShortcuts();
         }
 
+        /// <summary>ショートカット設定を適用する。グローバルホットキーまたはフォアグラウンドポーリングで動作する。</summary>
         public void ApplyShortcuts(ShortcutConfigData shortcutConfig)
         {
             _shortcuts.Clear();

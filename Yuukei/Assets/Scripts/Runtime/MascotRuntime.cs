@@ -10,6 +10,10 @@ using UnityEngine.Timeline;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// マスコットキャラクターの表示・アニメーション・表情・小道具を管理するランタイムコントローラー。
+    /// VRMキャラクターの読み込み、モーション再生、デスクトップ上の移動処理を担当する。
+    /// </summary>
     public sealed class MascotRuntime : MonoBehaviour
     {
         private static readonly IReadOnlyDictionary<string, Color> ExpressionPalette = new Dictionary<string, Color>(StringComparer.OrdinalIgnoreCase)
@@ -90,8 +94,10 @@ namespace Yuukei.Runtime
         private float _activeMotionTime;
         private ExpressionKey? _activeExpression;
 
+        /// <summary>マスコットの初期化。ルートオブジェクト・アンカー・プレースホルダーを構築する。</summary>
         public void Initialize(Camera worldCamera)
         {
+            Debug.Log("[MascotRuntime] 初期化開始");
             _worldCamera = worldCamera;
 
             _root = new GameObject("MascotRoot").transform;
@@ -109,6 +115,7 @@ namespace Yuukei.Runtime
             CreatePlaceholder();
             CreateProps();
             UpdateHitboxForPlaceholder();
+            Debug.Log("[MascotRuntime] 初期化完了");
         }
 
         public Vector3 SpeechAnchorWorldPosition => _anchor != null ? _anchor.position : transform.position;
@@ -131,8 +138,10 @@ namespace Yuukei.Runtime
             UpdateDisplayVisibility();
         }
 
+        /// <summary>VRMキャラクターを非同期で読み込む。失敗時はプレースホルダーを表示する。</summary>
         public async UniTask LoadCharacterAsync(string characterPath, System.Threading.CancellationToken cancellationToken)
         {
+            Debug.Log($"[MascotRuntime] キャラクター読み込み開始: {characterPath}");
             StopActiveMotion();
             ClearExpressionCatalog();
 
@@ -147,6 +156,7 @@ namespace Yuukei.Runtime
 
             if (string.IsNullOrWhiteSpace(characterPath) || !File.Exists(characterPath))
             {
+                Debug.Log("[MascotRuntime] キャラクターパスが未指定または存在しない。プレースホルダーを使用");
                 return;
             }
 
@@ -169,6 +179,7 @@ namespace Yuukei.Runtime
                 RebuildExpressionCatalog();
                 UpdateHitboxForLoadedCharacter();
                 RebindCurrentMotion();
+                Debug.Log($"[MascotRuntime] キャラクター読み込み成功: {characterPath}");
             }
             catch (Exception exception) when (!(exception is OperationCanceledException))
             {
@@ -184,8 +195,10 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>モーション定義を一括で非同期読み込みする。</summary>
         public async UniTask LoadMotionsAsync(IReadOnlyDictionary<string, string> motionPaths, System.Threading.CancellationToken cancellationToken)
         {
+            Debug.Log($"[MascotRuntime] モーション読み込み開始 (件数: {motionPaths?.Count ?? 0})");
             ClearLoadedMotions();
 
             if (motionPaths != null)
@@ -200,6 +213,7 @@ namespace Yuukei.Runtime
                             Debug.LogWarning($"[MascotRuntime] Motion '{pair.Key}' is missing: {pair.Value}");
                         }
 
+                        Debug.Log($"[MascotRuntime] モーション '{pair.Key}' をスキップ");
                         continue;
                     }
 
@@ -230,6 +244,7 @@ namespace Yuukei.Runtime
                             animationInstance,
                             (ITimeControl)animationInstance,
                             duration);
+                        Debug.Log($"[MascotRuntime] モーション '{pair.Key}' を読み込み完了 (長さ: {duration:F2}秒)");
                     }
                     catch (OperationCanceledException)
                     {
@@ -258,8 +273,10 @@ namespace Yuukei.Runtime
             }
 
             RebindCurrentMotion();
+            Debug.Log($"[MascotRuntime] モーション読み込み完了 (合計: {_loadedMotions.Count}件)");
         }
 
+        /// <summary>表情を設定する。VRMモデルまたはプレースホルダーの色を変更する。</summary>
         public void SetExpression(string name)
         {
             if (_vrmInstance != null)
@@ -272,6 +289,7 @@ namespace Yuukei.Runtime
 
                 _activeExpression = expressionKey;
                 ApplyExpressionOverride();
+                Debug.Log($"[MascotRuntime] 表情を設定: {name}");
                 return;
             }
 
@@ -287,8 +305,10 @@ namespace Yuukei.Runtime
             }
 
             _placeholderBody.material.color = color;
+            Debug.Log($"[MascotRuntime] プレースホルダー表情を設定: {name}");
         }
 
+        /// <summary>指定したモーションを再生する。</summary>
         public void PlayMotion(string name)
         {
             if (string.IsNullOrWhiteSpace(name))
@@ -300,8 +320,10 @@ namespace Yuukei.Runtime
             _currentMotion = name.Trim();
             _motionPhase = 0f;
             RebindCurrentMotion();
+            Debug.Log($"[MascotRuntime] モーション再生: {_currentMotion}");
         }
 
+        /// <summary>小道具の表示・非表示を切り替える。</summary>
         public void SetPropVisible(string name, bool visible)
         {
             if (!_props.TryGetValue(name ?? string.Empty, out var prop))
@@ -311,12 +333,15 @@ namespace Yuukei.Runtime
             }
 
             prop.SetActive(visible);
+            Debug.Log($"[MascotRuntime] 小道具 '{name}' を{(visible ? "表示" : "非表示")}に設定");
         }
 
+        /// <summary>マスコット全体の表示・非表示を切り替える。</summary>
         public void SetVisible(bool visible)
         {
             _isVisible = visible;
             UpdateDisplayVisibility();
+            Debug.Log($"[MascotRuntime] 表示状態を変更: {(visible ? "表示" : "非表示")}");
         }
 
         public void Tick(float deltaTime, float busyScore)

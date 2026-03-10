@@ -7,6 +7,10 @@ using UnityEngine.InputSystem;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// ショートカットキーのバインディング情報。
+    /// 文字列パース、キー押下判定、Windows ホットキーへの変換を行う。
+    /// </summary>
     internal readonly struct ShortcutBinding
     {
         public ShortcutBinding(string originalText, bool ctrl, bool shift, bool alt, Key key)
@@ -252,6 +256,10 @@ namespace Yuukei.Runtime
         IReadOnlyDictionary<ShortcutAction, ShortcutRegistrationStatus> ApplyShortcuts(IReadOnlyDictionary<ShortcutAction, ShortcutBinding> shortcuts);
     }
 
+    /// <summary>
+    /// Windows ネイティブ API を使用したシェルホスト実装。
+    /// トレイアイコン表示、グローバルホットキー登録、コンテキストメニューを管理する。
+    /// </summary>
     internal sealed class WindowsNativeShellHost : IWindowsShellHost
     {
         internal const uint ModAlt = 0x0001;
@@ -371,12 +379,15 @@ namespace Yuukei.Runtime
             _iconHandle = LoadIcon(IntPtr.Zero, (IntPtr)IdApplication);
             UpdateNotifyIcon(NimAdd);
             _initialized = true;
+            Debug.Log("[WindowsNativeShellHost] 初期化完了");
 #endif
         }
 
+        /// <summary>シェルホストを終了し、ホットキーとトレイアイコンを解放する。</summary>
         public void Shutdown()
         {
 #if UNITY_STANDALONE_WIN || UNITY_EDITOR_WIN
+            Debug.Log("[WindowsNativeShellHost] シャットダウン開始");
             UnregisterAllHotkeys();
             RemoveNotifyIcon();
 
@@ -443,6 +454,15 @@ namespace Yuukei.Runtime
                 var error = Marshal.GetLastWin32Error();
                 statuses[pair.Key] = new ShortcutRegistrationStatus(pair.Value.OriginalText, false, $"RegisterHotKey 失敗 ({error})");
             }
+
+            var registered = 0;
+            var failed = 0;
+            foreach (var s in statuses.Values)
+            {
+                if (s.IsRegistered) registered++;
+                else failed++;
+            }
+            Debug.Log($"[WindowsNativeShellHost] ショートカット適用結果: 成功={registered}, 失敗={failed}");
 #endif
             return statuses;
         }

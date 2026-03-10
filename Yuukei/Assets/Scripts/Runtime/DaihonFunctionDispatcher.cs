@@ -6,6 +6,10 @@ using Daihon;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// 台本スクリプトから呼び出される関数を管理・ディスパッチする。
+    /// ビルトイン関数の登録と、エイリアス解決を経た関数呼び出しを担当する。
+    /// </summary>
     public sealed class DaihonFunctionDispatcher
     {
         private readonly AliasRegistry _aliasRegistry;

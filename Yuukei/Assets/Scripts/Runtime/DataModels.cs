@@ -4,6 +4,7 @@ using Newtonsoft.Json;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>アプリケーション全体の永続化データ。パッケージ ID、オーバーライド、変数、アプリ状態を保持する。</summary>
     [Serializable]
     public sealed class YuukeiSaveData
     {
@@ -22,6 +23,7 @@ namespace Yuukei.Runtime
         public static YuukeiSaveData CreateDefault() => new YuukeiSaveData();
     }
 
+    /// <summary>ユーザーが個別に差し替えた台本・キャラクター・テクスチャ等の選択情報。</summary>
     [Serializable]
     public sealed class OverrideSelections
     {
@@ -59,6 +61,7 @@ namespace Yuukei.Runtime
         }
     }
 
+    /// <summary>アプリの一時的な動作状態(無効化・非表示・ショートカット設定)。</summary>
     [Serializable]
     public sealed class AppStateData
     {
@@ -72,6 +75,7 @@ namespace Yuukei.Runtime
         public ShortcutConfigData ShortcutConfig = new ShortcutConfigData();
     }
 
+    /// <summary>ショートカットキーの文字列設定(例: "Ctrl+;")。</summary>
     [Serializable]
     public sealed class ShortcutConfigData
     {
@@ -85,6 +89,7 @@ namespace Yuukei.Runtime
         public string OpenSettings = "Ctrl+Alt+;";
     }
 
+    /// <summary>パッケージの manifest.json に対応するデータモデル。</summary>
     [Serializable]
     public sealed class PackageManifest
     {
@@ -139,6 +144,7 @@ namespace Yuukei.Runtime
         }
     }
 
+    /// <summary>テクスチャの背景・しっぽパスを保持するマニフェスト項目。</summary>
     [Serializable]
     public sealed class PackageTextureManifest
     {
@@ -149,6 +155,7 @@ namespace Yuukei.Runtime
         public string Tail = string.Empty;
     }
 
+    /// <summary>イベント名・関数名のエイリアス定義。</summary>
     [Serializable]
     public sealed class PackageAliasManifest
     {
@@ -159,6 +166,7 @@ namespace Yuukei.Runtime
         public Dictionary<string, string> Functions = new Dictionary<string, string>();
     }
 
+    /// <summary>ディスク上のルートディレクトリとマニフェストを組み合わせた解決済みパッケージ。</summary>
     public sealed class ResolvedPackage
     {
         public ResolvedPackage(string rootDirectory, PackageManifest manifest)
@@ -182,6 +190,7 @@ namespace Yuukei.Runtime
         }
     }
 
+    /// <summary>パッケージとオーバーライドから解決された最終的なコンテンツパス群。</summary>
     public sealed class PackageContentSelection
     {
         public List<string> DaihonPaths = new List<string>();
@@ -192,6 +201,7 @@ namespace Yuukei.Runtime
         public List<string> DllPaths = new List<string>();
     }
 
+    /// <summary>パッケージ検証結果(警告メッセージ一覧)。</summary>
     public sealed class PackageValidationReport
     {
         public readonly List<string> Warnings = new List<string>();

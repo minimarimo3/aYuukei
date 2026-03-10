@@ -3,9 +3,14 @@ using System.Collections.Generic;
 using System.Globalization;
 using Cysharp.Threading.Tasks;
 using Daihon;
+using UnityEngine;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// 台本ランタイム用の変数ストア。
+    /// 永続変数・一時変数・動的変数・イベントコンテキスト変数を統合管理する。
+    /// </summary>
     public sealed class YuukeiVariableStore : IVariableStore
     {
         private readonly Dictionary<string, DaihonValue> _variables = new Dictionary<string, DaihonValue>(StringComparer.Ordinal);
@@ -17,6 +22,7 @@ namespace Yuukei.Runtime
             _persistenceStore = persistenceStore;
             RegisterBuiltinTimeVariables();
             LoadPersistentVariables();
+            Debug.Log($"[YuukeiVariableStore] 初期化完了 (永続変数={_variables.Count}, 動的変数={_dynamicGetters.Count})");
         }
 
         public bool IsDefined(string name)
@@ -57,11 +63,13 @@ namespace Yuukei.Runtime
             _variables[name] = value;
             if (!name.StartsWith("_", StringComparison.Ordinal))
             {
+                Debug.Log($"[YuukeiVariableStore] 永続変数を設定: {name}={value}");
                 _persistenceStore.SetPersistentVariable(name, DaihonValueUtility.ToPersistentObject(value));
                 _persistenceStore.RequestSave();
             }
         }
 
+        /// <summary>変数が未定義の場合のみデフォルト値を設定する。</summary>
         public void SetDefaultValue(string name, DaihonValue value)
         {
             if (IsDefined(name))
@@ -69,6 +77,7 @@ namespace Yuukei.Runtime
                 return;
             }
 
+            Debug.Log($"[YuukeiVariableStore] デフォルト値を設定: {name}={value}");
             _variables[name] = value;
             if (!name.StartsWith("_", StringComparison.Ordinal))
             {
@@ -94,6 +103,7 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>イベント発火時のコンテキスト変数を注入する。</summary>
         public void InjectEventContext(IReadOnlyDictionary<string, object> context)
         {
             ClearEventContext();
@@ -106,6 +116,8 @@ namespace Yuukei.Runtime
             {
                 _variables[pair.Key] = DaihonValueUtility.ToDaihonValue(pair.Value);
             }
+
+            Debug.Log($"[YuukeiVariableStore] イベントコンテキスト注入: {context.Count} 件");
         }
 
         public void ClearEventContext()
@@ -125,8 +137,10 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>一時変数とイベントコンテキストをすべてクリアする。</summary>
         public void ResetTransientState()
         {
+            Debug.Log("[YuukeiVariableStore] 一時状態をリセット");
             ClearTemporaryVariables();
             ClearEventContext();
         }

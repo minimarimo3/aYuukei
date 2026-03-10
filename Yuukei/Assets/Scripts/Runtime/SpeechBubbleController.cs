@@ -6,6 +6,10 @@ using UnityEngine.UI;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// 吹き出し（スピーチバブル）の表示・非表示・テーマ適用を管理するコントローラー。
+    /// マスコットの頭上にテキストを表示し、一定時間後に自動で非表示にする。
+    /// </summary>
     public sealed class SpeechBubbleController : MonoBehaviour
     {
         private Canvas _canvas;
@@ -17,8 +21,10 @@ namespace Yuukei.Runtime
         private Text _label;
         private int _displayVersion;
 
+        /// <summary>吹き出しUIの初期化。Canvas上にルート・ラベル・テールを構築する。</summary>
         public void Initialize(Canvas canvas, Camera worldCamera, Func<Vector3> anchorProvider)
         {
+            Debug.Log("[SpeechBubbleController] 初期化開始");
             _canvas = canvas;
             _worldCamera = worldCamera;
             _anchorProvider = anchorProvider;
@@ -67,13 +73,16 @@ namespace Yuukei.Runtime
             tailRect.localRotation = Quaternion.Euler(0f, 0f, 45f);
 
             rootObject.SetActive(false);
+            Debug.Log("[SpeechBubbleController] 初期化完了");
         }
 
+        /// <summary>テキストを表示し、文字数に応じた時間だけ待機してから自動で非表示にする。</summary>
         public async UniTask ShowDialogueAsync(string text, System.Threading.CancellationToken cancellationToken)
         {
             ShowImmediate(text);
             var version = _displayVersion;
             var duration = Mathf.Clamp(text.Length * 0.08f, 1.5f, 4.5f);
+            Debug.Log($"[SpeechBubbleController] ダイアログ表示: \"{text}\" (表示時間: {duration:F1}秒)");
             await UniTask.Delay(TimeSpan.FromSeconds(duration), cancellationToken: cancellationToken);
             if (version == _displayVersion)
             {
@@ -81,6 +90,7 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>テキストを即座に表示する。自動非表示タイマーも開始する。</summary>
         public void ShowImmediate(string text, float autoHideSeconds = 2.8f)
         {
             if (_root == null)
@@ -92,19 +102,24 @@ namespace Yuukei.Runtime
             _label.text = text ?? string.Empty;
             _root.gameObject.SetActive(true);
             UpdatePosition();
+            Debug.Log($"[SpeechBubbleController] 即時表示: \"{text}\"");
             ScheduleAutoHideAsync(_displayVersion, autoHideSeconds).Forget();
         }
 
+        /// <summary>吹き出しを非表示にする。</summary>
         public void Hide()
         {
+            Debug.Log("[SpeechBubbleController] 吹き出しを非表示");
             if (_root != null)
             {
                 _root.gameObject.SetActive(false);
             }
         }
 
+        /// <summary>吹き出しのテーマ（背景・テール画像）を適用する。</summary>
         public void ApplyTheme(string backgroundTexturePath, string tailTexturePath)
         {
+            Debug.Log($"[SpeechBubbleController] テーマ適用 背景: {backgroundTexturePath}, テール: {tailTexturePath}");
             ApplySprite(_background, backgroundTexturePath);
             ApplySprite(_tail, tailTexturePath);
         }

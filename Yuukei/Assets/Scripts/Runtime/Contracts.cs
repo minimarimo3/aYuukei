@@ -7,6 +7,7 @@ using UnityEngine;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>ショートカットキーで実行できるアクションの種別。</summary>
     public enum ShortcutAction
     {
         OpenSettings,
@@ -14,6 +15,7 @@ namespace Yuukei.Runtime
         ToggleHidden,
     }
 
+    /// <summary>トレイアイコンメニューから送信されるコマンドの種別。</summary>
     public enum TrayCommand
     {
         OpenSettings,
@@ -22,6 +24,7 @@ namespace Yuukei.Runtime
         Exit,
     }
 
+    /// <summary>ディスプレイの情報(インデックスと矩形範囲)。</summary>
     public readonly struct DesktopDisplayInfo
     {
         public DesktopDisplayInfo(int index, RectInt bounds)
@@ -34,6 +37,7 @@ namespace Yuukei.Runtime
         public RectInt Bounds { get; }
     }
 
+    /// <summary>アプリケーションのシェル状態(設定画面表示・無効化・非表示)。</summary>
     public readonly struct AppShellState
     {
         public AppShellState(bool isSettingsVisible, bool isTemporarilyDisabled, bool isTemporarilyHidden)
@@ -48,6 +52,7 @@ namespace Yuukei.Runtime
         public bool IsTemporarilyHidden { get; }
     }
 
+    /// <summary>ショートカットキーの登録状態(成功・失敗・メッセージ)。</summary>
     public readonly struct ShortcutRegistrationStatus
     {
         public ShortcutRegistrationStatus(string bindingText, bool isRegistered, string message)
@@ -62,6 +67,7 @@ namespace Yuukei.Runtime
         public string Message { get; }
     }
 
+    /// <summary>デスクトップ OS 固有機能(トレイ、ショートカット、ディスプレイ情報等)への抽象インターフェース。</summary>
     public interface IDesktopPlatformAdapter
     {
         event Action<TrayCommand> TrayCommandRequested;
@@ -84,10 +90,12 @@ namespace Yuukei.Runtime
         void OpenUrl(string url);
     }
 
+    /// <summary>パッケージとオーバーライド設定から最終的なコンテンツパスを解決するインターフェース。</summary>
     public interface IPackageContentResolver
     {
         PackageContentSelection ResolveActiveContent(ResolvedPackage package, OverrideSelections overrides);
     }
 
+    /// <summary>台本ランタイムから呼び出される正規関数のデリゲート型。</summary>
     public delegate UniTask<DaihonValue?> CanonicalFunctionDelegate(DaihonValue[] args, CancellationToken cancellationToken);
 }

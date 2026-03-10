@@ -3,6 +3,10 @@ using Daihon;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// DaihonValue と CLR オブジェクト間の相互変換を行うユーティリティ。
+    /// 永続化対象の型判定も担当する。
+    /// </summary>
     internal static class DaihonValueUtility
     {
         public static DaihonValue ToDaihonValue(object value)

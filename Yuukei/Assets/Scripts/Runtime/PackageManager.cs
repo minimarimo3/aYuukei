@@ -9,6 +9,10 @@ using UnityEngine;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// パッケージの検出・切り替え・インポート・削除を管理するクラス。
+    /// 起動時にスターターパッケージの存在を保証し、永続化されたアクティブパッケージを復元する。
+    /// </summary>
     public sealed class PackageManager : IPackageContentResolver
     {
         private const string StarterPackageId = "0f479418-2a7a-4c1d-93d8-b6cf7af6bfc0";
@@ -39,8 +43,10 @@ namespace Yuukei.Runtime
         public IReadOnlyList<ResolvedPackage> InstalledPackages => _installedPackages;
         public ResolvedPackage ActivePackage { get; private set; }
 
+        /// <summary>初期化: スターター保証 → パッケージ一覧読み込み → アクティブ復元。</summary>
         public async UniTask InitializeAsync(CancellationToken cancellationToken = default)
         {
+            Debug.Log("[PackageManager] 初期化を開始します");
             Directory.CreateDirectory(_packageRootDirectory);
             await EnsureStarterPackageAsync(cancellationToken);
             await ReloadInstalledPackagesAsync(cancellationToken);
@@ -50,22 +56,31 @@ namespace Yuukei.Runtime
                 ?? _installedPackages.FirstOrDefault(package => package.PackageId == StarterPackageId)
                 ?? _installedPackages.FirstOrDefault();
 
+            Debug.Log($"[PackageManager] 検出パッケージ数={_installedPackages.Count}, 希望ID={desiredId}, 解決={resolved?.PackageId ?? "(なし)"}");
+
             if (resolved != null)
             {
                 await SwitchActivePackageAsync(resolved.PackageId, cancellationToken);
             }
+
+            Debug.Log("[PackageManager] 初期化が完了しました");
         }
 
+        /// <summary>スターターパッケージが未導入なら作成する。</summary>
         public async UniTask EnsureStarterPackageAsync(CancellationToken cancellationToken = default)
         {
             var starterDirectory = GetInstallDirectory(StarterCreator, StarterVersion, StarterPackageId);
             if (Directory.Exists(starterDirectory) && File.Exists(Path.Combine(starterDirectory, "manifest.json")))
             {
+                Debug.Log("[PackageManager] スターターパッケージは既に存在します");
                 return;
             }
 
+            Debug.Log("[PackageManager] スターターパッケージが見つかりません。作成します");
+
             if (TryInstallStarterPackageFromExample(starterDirectory))
             {
+                Debug.Log("[PackageManager] サンプルからスターターパッケージをコピーしました");
                 return;
             }
 
@@ -97,8 +112,11 @@ namespace Yuukei.Runtime
 
             await WriteSolidTextureAsync(Path.Combine(starterDirectory, "Textures", "speech_bubble_bg.png"), new Color32(30, 38, 55, 245), cancellationToken);
             await WriteSolidTextureAsync(Path.Combine(starterDirectory, "Textures", "speech_bubble_tail.png"), new Color32(30, 38, 55, 245), cancellationToken);
+
+            Debug.Log("[PackageManager] スターターパッケージを新規生成しました");
         }
 
+        /// <summary>パッケージルートを再スキャンし、一覧を更新する。</summary>
         public async UniTask ReloadInstalledPackagesAsync(CancellationToken cancellationToken = default)
         {
             _installedPackages.Clear();
@@ -132,11 +150,14 @@ namespace Yuukei.Runtime
                 }
             }
 
+            Debug.Log($"[PackageManager] パッケージ再スキャン完了: {_installedPackages.Count}件検出");
             InstalledPackagesChanged?.Invoke(_installedPackages);
         }
 
+        /// <summary>アクティブパッケージを切り替える。</summary>
         public async UniTask SwitchActivePackageAsync(string packageId, CancellationToken cancellationToken = default)
         {
+            Debug.Log($"[PackageManager] パッケージ切り替え開始: {packageId}");
             var package = _installedPackages.FirstOrDefault(entry => entry.PackageId == packageId);
             if (package == null)
             {
@@ -148,25 +169,31 @@ namespace Yuukei.Runtime
             _persistenceStore.ResetOverrides();
             _persistenceStore.RequestSave();
             ActivePackageChanged?.Invoke(package);
+            Debug.Log($"[PackageManager] パッケージ切り替え完了: {package.PackageId}");
             await UniTask.CompletedTask;
         }
 
+        /// <summary>フォルダからパッケージをインポートする。</summary>
         public async UniTask<bool> ImportPackageFromFolderAsync(string folderPath, CancellationToken cancellationToken = default)
         {
+            Debug.Log($"[PackageManager] フォルダからインポート開始: {folderPath}");
             if (string.IsNullOrWhiteSpace(folderPath) || !Directory.Exists(folderPath))
             {
+                Debug.LogWarning($"[PackageManager] インポート失敗: フォルダが存在しません ({folderPath})");
                 return false;
             }
 
             var manifestPath = Path.Combine(folderPath, "manifest.json");
             if (!File.Exists(manifestPath))
             {
+                Debug.LogWarning("[PackageManager] インポート失敗: manifest.json が見つかりません");
                 return false;
             }
 
             var manifest = JsonConvert.DeserializeObject<PackageManifest>(await File.ReadAllTextAsync(manifestPath, cancellationToken));
             if (manifest == null || string.IsNullOrWhiteSpace(manifest.Id))
             {
+                Debug.LogWarning("[PackageManager] インポート失敗: マニフェストが無効です");
                 return false;
             }
 
@@ -179,19 +206,24 @@ namespace Yuukei.Runtime
 
             CopyDirectory(folderPath, destination);
             await ReloadInstalledPackagesAsync(cancellationToken);
+            Debug.Log($"[PackageManager] インポート成功: {manifest.Id}");
             return true;
         }
 
+        /// <summary>指定パッケージを削除する。アクティブだった場合はフォールバックに切り替える。</summary>
         public async UniTask DeletePackageAsync(string packageId, CancellationToken cancellationToken = default)
         {
+            Debug.Log($"[PackageManager] パッケージ削除開始: {packageId}");
             var package = _installedPackages.FirstOrDefault(entry => entry.PackageId == packageId);
             if (package == null)
             {
+                Debug.Log($"[PackageManager] 削除対象のパッケージが見つかりません: {packageId}");
                 return;
             }
 
             Directory.Delete(package.RootDirectory, true);
             await ReloadInstalledPackagesAsync(cancellationToken);
+            Debug.Log($"[PackageManager] パッケージを削除しました: {packageId}");
 
             if (ActivePackage?.PackageId == packageId)
             {
@@ -256,8 +288,10 @@ namespace Yuukei.Runtime
             return selection;
         }
 
+        /// <summary>アクティブパッケージのファイル整合性を検証する。</summary>
         public PackageValidationReport ValidateActivePackage()
         {
+            Debug.Log("[PackageManager] アクティブパッケージの検証を開始します");
             var report = new PackageValidationReport();
             var content = GetResolvedActiveContent();
             foreach (var daihonPath in content.DaihonPaths)
@@ -295,6 +329,15 @@ namespace Yuukei.Runtime
                 {
                     report.Warnings.Add($"Missing DLL: {dllPath}");
                 }
+            }
+
+            if (report.Warnings.Count > 0)
+            {
+                Debug.LogWarning($"[PackageManager] 検証完了: {report.Warnings.Count}件の警告があります");
+            }
+            else
+            {
+                Debug.Log("[PackageManager] 検証完了: 問題なし");
             }
 
             return report;

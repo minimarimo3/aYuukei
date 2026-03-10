@@ -9,6 +9,10 @@ using Daihon;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// 台本スクリプトのパース・実行エンジン。
+    /// スクリプトテキストを解析し、イベントに応じたシーンを選択・実行する。
+    /// </summary>
     public sealed class DaihonScriptRuntime
     {
         public sealed class SceneMetadata
@@ -30,10 +34,13 @@ namespace Yuukei.Runtime
             public Dictionary<string, DaihonParser.SceneContext> SceneLookup = new Dictionary<string, DaihonParser.SceneContext>(StringComparer.Ordinal);
         }
 
+        /// <summary>スクリプトテキストを解析し、メタデータを返す。</summary>
         public ScriptMetadata Parse(string scriptText)
         {
+            UnityEngine.Debug.Log("[DaihonScriptRuntime] パース開始");
             if (string.IsNullOrWhiteSpace(scriptText))
             {
+                UnityEngine.Debug.Log("[DaihonScriptRuntime] 空のスクリプト — パース中断");
                 return null;
             }
 
@@ -56,6 +63,7 @@ namespace Yuukei.Runtime
             var tree = parser.file();
             if (errors.Count > 0)
             {
+                UnityEngine.Debug.LogError($"[DaihonScriptRuntime] パース失敗 — {errors.Count} 件のエラー");
                 foreach (var error in errors)
                 {
                     UnityEngine.Debug.LogError($"[DaihonScriptRuntime] Parse error: {error}");
@@ -99,9 +107,11 @@ namespace Yuukei.Runtime
                 metadata.SceneLookup[sceneName] = scene;
             }
 
+            UnityEngine.Debug.Log($"[DaihonScriptRuntime] パース成功 — シーン数: {metadata.Scenes.Count}");
             return metadata;
         }
 
+        /// <summary>指定イベントに一致するシーンを探して実行する。</summary>
         public async UniTask RunEventAsync(
             ScriptMetadata metadata,
             string canonicalEventName,
@@ -115,6 +125,7 @@ namespace Yuukei.Runtime
                 return;
             }
 
+            UnityEngine.Debug.Log($"[DaihonScriptRuntime] イベント '{canonicalEventName}' の実行開始（シーン数: {metadata.Scenes.Count}）");
             var visitor = new DaihonScriptVisitor(actionHandler, variableStore);
 
             try
@@ -142,8 +153,11 @@ namespace Yuukei.Runtime
                             continue;
                         }
 
+                        UnityEngine.Debug.Log($"[DaihonScriptRuntime] シーン '{scene.SceneName}' がイベント '{canonicalEventName}' に一致");
+
                         if (scene.HasCondition && !await EvaluateConditionAsync(scene.ConditionContext, actionHandler, variableStore, metadata.DefaultsBlock))
                         {
+                            UnityEngine.Debug.Log($"[DaihonScriptRuntime] シーン '{scene.SceneName}' の条件が不成立 — スキップ");
                             continue;
                         }
 
@@ -151,6 +165,7 @@ namespace Yuukei.Runtime
                         var jumped = await ExecuteSceneWithFlowAsync(visitor, scene.SceneContext, metadata.SceneLookup, cancellationToken);
                         if (jumped)
                         {
+                            UnityEngine.Debug.Log($"[DaihonScriptRuntime] シーン '{scene.SceneName}' でジャンプ発生 — イベント処理終了");
                             return;
                         }
                     }
@@ -176,6 +191,7 @@ namespace Yuukei.Runtime
 
                 if (!executedSpecificScene && defaultScenes.Count > 0)
                 {
+                    UnityEngine.Debug.Log($"[DaihonScriptRuntime] 特定シーン未実行 — デフォルトシーンから1つ選択（候補: {defaultScenes.Count}）");
                     var chosen = defaultScenes[UnityEngine.Random.Range(0, defaultScenes.Count)];
                     await ExecuteSceneWithFlowAsync(visitor, chosen.SceneContext, metadata.SceneLookup, cancellationToken);
                 }
@@ -185,6 +201,7 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>条件式を評価し、真偽を返す。</summary>
         public async UniTask<bool> EvaluateConditionAsync(
             DaihonParser.CondExprContext conditionContext,
             IActionHandler actionHandler,
@@ -203,7 +220,9 @@ namespace Yuukei.Runtime
             }
 
             var result = await visitor.VisitCondExpr(conditionContext);
-            return result.IsTruthy();
+            var isTruthy = result.IsTruthy();
+            UnityEngine.Debug.Log($"[DaihonScriptRuntime] 条件評価結果: {isTruthy}");
+            return isTruthy;
         }
 
         private static bool SceneMatches(SceneMetadata scene, string canonicalEventName, AliasRegistry aliasRegistry)
@@ -221,6 +240,7 @@ namespace Yuukei.Runtime
             return false;
         }
 
+        /// <summary>シーンを実行し、ジャンプがあれば追跡する。</summary>
         private static async UniTask<bool> ExecuteSceneWithFlowAsync(
             DaihonScriptVisitor visitor,
             DaihonParser.SceneContext sceneContext,
@@ -247,12 +267,13 @@ namespace Yuukei.Runtime
                 {
                     jumped = true;
                     jumpCount++;
+                    var targetSceneName = GetJumpTargetSceneName(exception);
+                    UnityEngine.Debug.Log($"[DaihonScriptRuntime] シーンジャンプ #{jumpCount}: → '{targetSceneName}'");
                     if (jumpCount > 1000)
                     {
                         throw new DaihonRuntimeException("ジャンプ回数が上限の 1000 回を超えました。");
                     }
 
-                    var targetSceneName = GetJumpTargetSceneName(exception);
                     if (!sceneLookup.TryGetValue(targetSceneName, out current))
                     {
                         throw new DaihonRuntimeException($"ジャンプ先のシーン '{targetSceneName}' が存在しません。");

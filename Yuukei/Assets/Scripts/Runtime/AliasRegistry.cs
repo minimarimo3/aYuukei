@@ -4,6 +4,10 @@ using UnityEngine;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// イベント名・関数名のエイリアス（日本語名 → 正規名）を管理するレジストリ。
+    /// ビルトイン定義とパッケージ定義の優先度付き登録・解決を行う。
+    /// </summary>
     public sealed class AliasRegistry
     {
         private sealed class AliasEntry
@@ -33,8 +37,10 @@ namespace Yuukei.Runtime
             ResetToBuiltins();
         }
 
+        /// <summary>ビルトインエイリアスのみにリセットする。</summary>
         public void ResetToBuiltins()
         {
+            Debug.Log("[AliasRegistry] ビルトインエイリアスにリセットします");
             _eventAliases.Clear();
             _functionAliases.Clear();
             _canonicalEvents.Clear();
@@ -57,6 +63,7 @@ namespace Yuukei.Runtime
             RegisterFunctionAliasInternal("永続保存", "set_persistent", BuiltinPriority, "builtin");
         }
 
+        /// <summary>パッケージ定義のエイリアスを一括読み込みする。</summary>
         public void LoadPackageAliases(PackageAliasManifest aliases)
         {
             aliases ??= new PackageAliasManifest();
@@ -70,23 +77,31 @@ namespace Yuukei.Runtime
             {
                 RegisterFunctionAliasInternal(pair.Key, pair.Value, PackagePriority, "package");
             }
+
+            Debug.Log($"[AliasRegistry] パッケージエイリアスを読み込みました: イベント {aliases.Events.Count} 件, 関数 {aliases.Functions.Count} 件");
         }
 
+        /// <summary>ランタイムからイベントエイリアスを登録する。</summary>
         public void RegisterEventAlias(string alias, string canonicalName)
         {
+            Debug.Log($"[AliasRegistry] イベントエイリアス登録: '{alias}' → '{canonicalName}'");
             RegisterEventAliasInternal(alias, canonicalName, PackagePriority, "runtime");
         }
 
+        /// <summary>ランタイムから関数エイリアスを登録する。</summary>
         public void RegisterFunctionAlias(string alias, string canonicalName)
         {
+            Debug.Log($"[AliasRegistry] 関数エイリアス登録: '{alias}' → '{canonicalName}'");
             RegisterFunctionAliasInternal(alias, canonicalName, PackagePriority, "runtime");
         }
 
+        /// <summary>イベント名を正規名に解決する。</summary>
         public bool TryResolveEventName(string rawName, out string canonicalName)
         {
             return TryResolve(_eventAliases, _canonicalEvents, rawName, out canonicalName);
         }
 
+        /// <summary>関数名を正規名に解決する。</summary>
         public bool TryResolveFunctionName(string rawName, out string canonicalName)
         {
             return TryResolve(_functionAliases, _canonicalFunctions, rawName, out canonicalName);
@@ -124,6 +139,7 @@ namespace Yuukei.Runtime
             RegisterAlias(_functionAliases, _canonicalFunctions, alias, canonicalName, priority, sourceName, "function");
         }
 
+        /// <summary>エイリアスまたは正規名辞書から名前を解決する。</summary>
         private static bool TryResolve(
             Dictionary<string, AliasEntry> aliasEntries,
             Dictionary<string, string> canonicalEntries,
@@ -146,6 +162,7 @@ namespace Yuukei.Runtime
             return canonicalEntries.TryGetValue(normalized, out canonicalName);
         }
 
+        /// <summary>優先度付きでエイリアスを登録する。衝突時は優先度で判定する。</summary>
         private static void RegisterAlias(
             Dictionary<string, AliasEntry> aliasEntries,
             Dictionary<string, string> canonicalEntries,
@@ -177,6 +194,7 @@ namespace Yuukei.Runtime
             aliasEntries[normalizedAlias] = new AliasEntry(trimmedCanonical, priority, sourceName);
         }
 
+        /// <summary>名前を正規化する。ASCII文字列は小文字化、日本語はそのまま保持する。</summary>
         internal static string Normalize(string value)
         {
             var trimmed = value?.Trim() ?? string.Empty;

@@ -9,6 +9,10 @@ using UnityEngine;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// 台本（Daihon）スクリプトとランタイムを仲介するブリッジ。
+    /// パッケージからスクリプトを読み込み、イベントをキューイングして順次実行する。
+    /// </summary>
     public sealed class DaihonBridge
     {
         private sealed class PendingEvent
@@ -79,6 +83,7 @@ namespace Yuukei.Runtime
         private bool _isProcessing;
         private bool _temporarilyDisabled;
 
+        /// <summary>ブリッジを初期化し、関数ディスパッチャーを構築する。</summary>
         public DaihonBridge(
             AliasRegistry aliasRegistry,
             YuukeiVariableStore variableStore,
@@ -90,10 +95,13 @@ namespace Yuukei.Runtime
             _variableStore = variableStore;
             _speechBubbleController = speechBubbleController;
             _dispatcher = new DaihonFunctionDispatcher(aliasRegistry, speechBubbleController, choiceOverlayController, mascotRuntime, variableStore);
+            Debug.Log("[DaihonBridge] 初期化完了");
         }
 
+        /// <summary>外部から関数を登録する。</summary>
         public void RegisterFunction(string canonicalName, CanonicalFunctionDelegate function)
         {
+            Debug.Log($"[DaihonBridge] 関数を登録: {canonicalName}");
             _dispatcher.RegisterFunction(canonicalName, function);
         }
 
@@ -117,8 +125,10 @@ namespace Yuukei.Runtime
             return _aliasRegistry.TryResolveFunctionName(rawName, out canonicalName);
         }
 
+        /// <summary>アクティブパッケージのスクリプトを読み込み直す。</summary>
         public async UniTask ApplyActivePackageAsync(PackageContentSelection contentSelection, PackageAliasManifest aliases, CancellationToken cancellationToken)
         {
+            Debug.Log("[DaihonBridge] パッケージ適用開始 — 既存状態をクリア");
             CancelAndClear();
             _aliasRegistry.ResetToBuiltins();
             _aliasRegistry.LoadPackageAliases(aliases);
@@ -126,9 +136,11 @@ namespace Yuukei.Runtime
 
             if (contentSelection == null || contentSelection.DaihonPaths == null || contentSelection.DaihonPaths.Count == 0)
             {
+                Debug.Log("[DaihonBridge] 読み込むスクリプトなし");
                 return;
             }
 
+            Debug.Log($"[DaihonBridge] {contentSelection.DaihonPaths.Count} 件のスクリプトパスを処理");
             foreach (var daihonPath in contentSelection.DaihonPaths)
             {
                 if (string.IsNullOrWhiteSpace(daihonPath))
@@ -144,6 +156,7 @@ namespace Yuukei.Runtime
 
                 try
                 {
+                    Debug.Log($"[DaihonBridge] スクリプト読み込み中: {daihonPath}");
                     var scriptText = await File.ReadAllTextAsync(daihonPath, cancellationToken);
                     var metadata = _runtime.Parse(scriptText);
                     if (metadata == null)
@@ -153,6 +166,7 @@ namespace Yuukei.Runtime
                     }
 
                     _activeScripts.Add(new LoadedScript(daihonPath, metadata));
+                    Debug.Log($"[DaihonBridge] スクリプト読み込み成功: {daihonPath}");
                 }
                 catch (OperationCanceledException)
                 {
@@ -163,17 +177,22 @@ namespace Yuukei.Runtime
                     Debug.LogWarning($"[DaihonBridge] Failed to load Daihon script '{daihonPath}'. Skipping. {exception.Message}");
                 }
             }
+
+            Debug.Log($"[DaihonBridge] パッケージ適用完了 — {_activeScripts.Count} 件のスクリプトが有効");
         }
 
+        /// <summary>イベントを発火し、キューに追加する。</summary>
         public UniTask RaiseEventAsync(string eventName, IReadOnlyDictionary<string, object> context, CancellationToken cancellationToken)
         {
             if (_temporarilyDisabled || _activeScripts.Count == 0)
             {
+                Debug.Log($"[DaihonBridge] イベント '{eventName}' をスキップ（disabled={_temporarilyDisabled}, scripts={_activeScripts.Count}）");
                 return UniTask.CompletedTask;
             }
 
             if (!_aliasRegistry.TryResolveEventName(eventName, out var canonicalName))
             {
+                Debug.Log($"[DaihonBridge] イベント '{eventName}' は未解決 — スキップ");
                 return UniTask.CompletedTask;
             }
 
@@ -185,6 +204,7 @@ namespace Yuukei.Runtime
             }
             else
             {
+                Debug.Log($"[DaihonBridge] イベント '{canonicalName}' をキューに追加（キュー長: {_queue.Count + 1}）");
                 _queue.Add(pendingEvent);
             }
 
@@ -192,8 +212,10 @@ namespace Yuukei.Runtime
             return pendingEvent.CompletionSource.Task;
         }
 
+        /// <summary>一時的にイベント処理を無効化/有効化する。</summary>
         public void SetTemporarilyDisabled(bool disabled)
         {
+            Debug.Log($"[DaihonBridge] 一時無効化状態を変更: {_temporarilyDisabled} → {disabled}");
             _temporarilyDisabled = disabled;
             if (disabled)
             {
@@ -201,8 +223,10 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>実行中の処理をキャンセルし、キューを全消去する。</summary>
         public void CancelAndClear()
         {
+            Debug.Log($"[DaihonBridge] キャンセル＆クリア実行（キュー残: {_queue.Count}）");
             _runtimeCancellation.Cancel();
             _runtimeCancellation.Dispose();
             _runtimeCancellation = new CancellationTokenSource();
@@ -229,8 +253,10 @@ namespace Yuukei.Runtime
             ProcessQueueAsync().Forget();
         }
 
+        /// <summary>キュー内のイベントを順次処理するループ。</summary>
         private async UniTaskVoid ProcessQueueAsync()
         {
+            Debug.Log("[DaihonBridge] キュー処理ループ開始");
             _isProcessing = true;
             try
             {
@@ -259,11 +285,14 @@ namespace Yuukei.Runtime
             finally
             {
                 _isProcessing = false;
+                Debug.Log("[DaihonBridge] キュー処理ループ終了");
             }
         }
 
+        /// <summary>キューから取り出した1件のイベントを全スクリプトに対して実行する。</summary>
         private async UniTask ExecutePendingEventAsync(PendingEvent pendingEvent)
         {
+            Debug.Log($"[DaihonBridge] イベント実行開始: '{pendingEvent.CanonicalName}'（対象スクリプト数: {_activeScripts.Count}）");
             using var linkedSource = CancellationTokenSource.CreateLinkedTokenSource(_runtimeCancellation.Token, pendingEvent.CancellationToken);
             try
             {
@@ -294,10 +323,12 @@ namespace Yuukei.Runtime
                     }
                 }
 
+                Debug.Log($"[DaihonBridge] イベント実行完了: '{pendingEvent.CanonicalName}'");
                 pendingEvent.CompletionSource.TrySetResult();
             }
             catch (OperationCanceledException)
             {
+                Debug.Log($"[DaihonBridge] イベント実行キャンセル: '{pendingEvent.CanonicalName}'");
                 pendingEvent.CompletionSource.TrySetCanceled();
             }
             catch (Exception exception)

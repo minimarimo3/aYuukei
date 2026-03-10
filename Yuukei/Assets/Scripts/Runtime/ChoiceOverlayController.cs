@@ -9,6 +9,10 @@ using UnityEngine.UI;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// 選択肢オーバーレイの表示・選択・キャンセルを管理するコントローラー。
+    /// ユーザーにボタン形式の選択肢を提示し、選択結果を非同期で返す。
+    /// </summary>
     public sealed class ChoiceOverlayController : MonoBehaviour
     {
         private Canvas _canvas;
@@ -17,8 +21,10 @@ namespace Yuukei.Runtime
         private UniTaskCompletionSource<string> _completionSource;
         private System.Threading.CancellationTokenRegistration _cancellationRegistration;
 
+        /// <summary>選択肢オーバーレイUIの初期化。パネル・カード・ボタンコンテナを構築する。</summary>
         public void Initialize(Canvas canvas)
         {
+            Debug.Log("[ChoiceOverlayController] 初期化開始");
             _canvas = canvas;
             EnsureEventSystem();
 
@@ -77,8 +83,10 @@ namespace Yuukei.Runtime
             closeButton.transform.SetParent(cardObject.transform, false);
 
             panelObject.SetActive(false);
+            Debug.Log("[ChoiceOverlayController] 初期化完了");
         }
 
+        /// <summary>選択肢を表示し、ユーザーの選択を非同期で待機する。</summary>
         public UniTask<string> ShowChoicesAsync(IReadOnlyList<string> choices, System.Threading.CancellationToken cancellationToken)
         {
             if (choices == null || choices.Count == 0)
@@ -109,9 +117,11 @@ namespace Yuukei.Runtime
 
             _cancellationRegistration.Dispose();
             _cancellationRegistration = cancellationToken.RegisterWithoutCaptureExecutionContext(CancelFromRuntimeCancellation);
+            Debug.Log($"[ChoiceOverlayController] 選択肢を表示 (件数: {choices.Count})");
             return _completionSource.Task;
         }
 
+        /// <summary>現在表示中の選択肢をキャンセルする。</summary>
         public void CancelCurrent()
         {
             if (_completionSource == null)
@@ -119,6 +129,7 @@ namespace Yuukei.Runtime
                 return;
             }
 
+            Debug.Log("[ChoiceOverlayController] 選択肢をキャンセル");
             Complete(string.Empty);
         }
 
@@ -143,6 +154,7 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>選択を確定し、結果を返してオーバーレイを閉じる。</summary>
         private void Complete(string value)
         {
             if (_completionSource == null)
@@ -150,6 +162,7 @@ namespace Yuukei.Runtime
                 return;
             }
 
+            Debug.Log($"[ChoiceOverlayController] 選択確定: \"{value}\"");
             _completionSource.TrySetResult(value ?? string.Empty);
             _completionSource = null;
             _cancellationRegistration.Dispose();

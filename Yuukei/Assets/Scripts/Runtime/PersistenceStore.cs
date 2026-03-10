@@ -10,6 +10,10 @@ using UnityEngine;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// アプリケーションの永続データ (セーブデータ) を管理するクラス。
+    /// JSON ファイルへの読み書きを行い、バックグラウンド保存キューでディスク I/O を最適化する。
+    /// </summary>
     public sealed class PersistenceStore
     {
         private readonly string _saveFilePath;
@@ -28,10 +32,13 @@ namespace Yuukei.Runtime
         public YuukeiSaveData Data { get; private set; }
         public string SaveFilePath => _saveFilePath;
 
+        /// <summary>セーブファイルからデータを読み込む。ファイルが無ければデフォルトを使用する。</summary>
         public async UniTask LoadAsync(CancellationToken cancellationToken = default)
         {
+            Debug.Log($"[PersistenceStore] ロード開始: {_saveFilePath}");
             if (!File.Exists(_saveFilePath))
             {
+                Debug.Log("[PersistenceStore] セーブファイルが存在しません。デフォルト値を使用します");
                 Data = YuukeiSaveData.CreateDefault();
                 ResetSaveState();
                 return;
@@ -65,6 +72,7 @@ namespace Yuukei.Runtime
 
                 Data = loaded;
                 ResetSaveState();
+                Debug.Log($"[PersistenceStore] ロード成功: 永続変数{loaded.PersistentVariables.Count}件");
             }
             catch (Exception exception)
             {
@@ -74,8 +82,10 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>非同期でセーブデータをディスクに書き込む。</summary>
         public async UniTask SaveAsync(CancellationToken cancellationToken = default)
         {
+            Debug.Log("[PersistenceStore] 非同期セーブを実行します");
             int targetVersion;
             lock (_saveStateLock)
             {
@@ -92,8 +102,10 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>同期的に即座にセーブを実行する。</summary>
         public void SaveImmediately()
         {
+            Debug.Log("[PersistenceStore] 即時セーブを実行します");
             int targetVersion;
             lock (_saveStateLock)
             {
@@ -110,8 +122,10 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>バックグラウンド保存をキューに追加する。</summary>
         public void RequestSave()
         {
+            Debug.Log("[PersistenceStore] セーブをキューに追加しました");
             lock (_saveStateLock)
             {
                 _requestedSaveVersion++;
@@ -126,8 +140,10 @@ namespace Yuukei.Runtime
             ProcessQueuedSavesAsync().Forget();
         }
 
+        /// <summary>未書き込みのセーブがあればフラッシュする。</summary>
         public async UniTask FlushPendingSaveAsync(CancellationToken cancellationToken = default)
         {
+            Debug.Log("[PersistenceStore] 保留中のセーブをフラッシュします");
             int targetVersion;
             lock (_saveStateLock)
             {
@@ -158,8 +174,10 @@ namespace Yuukei.Runtime
             return Data.PersistentVariables.TryGetValue(key, out value);
         }
 
+        /// <summary>永続変数を設定する。型の一貫性を検証する。</summary>
         public void SetPersistentVariable(string key, object value)
         {
+            Debug.Log($"[PersistenceStore] 永続変数を設定: {key}={value}");
             if (string.IsNullOrWhiteSpace(key))
             {
                 throw new ArgumentException("Persistent variable key must not be empty.", nameof(key));

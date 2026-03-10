@@ -8,6 +8,10 @@ using UnityEngine.UIElements;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// 設定画面の UI を構築・管理するクラス。
+    /// サイドバーで各ページを切り替え、パッケージ管理やショートカット設定などを表示する。
+    /// </summary>
     public sealed class SettingsWindow : MonoBehaviour
     {
         private enum SettingsPage
@@ -175,11 +179,14 @@ namespace Yuukei.Runtime
             _root.Add(main);
             _root.style.display = DisplayStyle.None;
 
+            Debug.Log("[SettingsWindow] 初期化完了");
             Rebuild();
         }
 
+        /// <summary>設定画面の表示・非表示を切り替える。</summary>
         public void SetVisible(bool visible)
         {
+            Debug.Log($"[SettingsWindow] 表示切替: visible={visible}");
             if (_root != null)
             {
                 _root.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
@@ -201,8 +208,10 @@ namespace Yuukei.Runtime
             Rebuild();
         }
 
+        /// <summary>サイドバーで選択されたページを表示する。</summary>
         private void ShowPage(SettingsPage page)
         {
+            Debug.Log($"[SettingsWindow] ページ表示: {page}");
             _currentPage = page;
             Rebuild();
         }

@@ -4,6 +4,9 @@ using System.IO;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// ファイルパスの拡張子からファイル種別(image, audio, model 等)を判定するユーティリティ。
+    /// </summary>
     public static class FileKindClassifier
     {
         private static readonly Dictionary<string, string> Map = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)

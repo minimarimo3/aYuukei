@@ -9,6 +9,10 @@ using UnityEngine.UI;
 
 namespace Yuukei.Runtime
 {
+    /// <summary>
+    /// 常駐アプリケーション全体のライフサイクルを管理するメインコントローラー。
+    /// 初期化、パッケージ切替、設定画面の表示切替、トレイコマンド処理などを統括する。
+    /// </summary>
     public sealed class ResidentAppController : MonoBehaviour
     {
         private Canvas _runtimeCanvas;
@@ -32,16 +36,21 @@ namespace Yuukei.Runtime
         private bool _isInitialized;
         private bool _apiKeyConfigured;
 
+        /// <summary>シーン参照の確保とランタイムオブジェクトの構築を行う。</summary>
         private void Awake()
         {
+            Debug.Log("[ResidentAppController] Awake: アプリケーション起動処理を開始します");
             DontDestroyOnLoad(gameObject);
             _lifetime = new CancellationTokenSource();
             EnsureSceneReferences();
             BuildRuntimeObjects();
+            Debug.Log("[ResidentAppController] Awake: シーン参照とランタイムオブジェクトの構築が完了しました");
         }
 
+        /// <summary>非同期初期化処理を開始する。</summary>
         private void Start()
         {
+            Debug.Log("[ResidentAppController] Start: 非同期初期化を開始します");
             InitializeAsync(_lifetime.Token).Forget();
         }
 
@@ -58,17 +67,22 @@ namespace Yuukei.Runtime
             _mascotRuntime.Tick(Time.deltaTime, _inputContextMonitor.BusyScore);
         }
 
+        /// <summary>各サブシステムを順番に初期化し、アプリケーションを起動可能な状態にする。</summary>
         private async UniTask InitializeAsync(CancellationToken cancellationToken)
         {
+            Debug.Log("[ResidentAppController] InitializeAsync: デスクトップアダプターを初期化しています");
             _desktopAdapter = new WindowsDesktopAdapter();
             _desktopAdapter.Initialize();
             _desktopAdapter.ShortcutTriggered += HandleShortcutTriggered;
             _desktopAdapter.TrayCommandRequested += HandleTrayCommandRequested;
 
+            Debug.Log("[ResidentAppController] InitializeAsync: 永続化ストアを読み込んでいます");
             _persistenceStore = new PersistenceStore();
             var isFirstLaunch = !File.Exists(_persistenceStore.SaveFilePath);
             await _persistenceStore.LoadAsync(cancellationToken);
+            Debug.Log("[ResidentAppController] InitializeAsync: 初回起動=" + isFirstLaunch);
 
+            Debug.Log("[ResidentAppController] InitializeAsync: パッケージマネージャーと各サービスを構築しています");
             _packageManager = new PackageManager(_persistenceStore);
             _tutorialBootstrap = new TutorialBootstrap(_persistenceStore, _packageManager);
             _pluginLoader = new PluginLoader();
@@ -82,6 +96,7 @@ namespace Yuukei.Runtime
             _desktopAdapter.ApplyShortcuts(_persistenceStore.Data.AppState.ShortcutConfig);
             _desktopAdapter.UpdateShellState(BuildShellState());
 
+            Debug.Log("[ResidentAppController] InitializeAsync: 設定画面を初期化しています");
             _settingsWindow.Initialize(
                 CloseSettingsAsync,
                 SwitchPackageAsync,
@@ -95,11 +110,13 @@ namespace Yuukei.Runtime
                 ApproveDllsAsync,
                 ClearDllApprovalsAsync);
 
+            Debug.Log("[ResidentAppController] InitializeAsync: チュートリアルとパッケージを初期化しています");
             await _tutorialBootstrap.EnsureFirstLaunchPackageStateAsync(cancellationToken);
             await _packageManager.InitializeAsync(cancellationToken);
             _packageManager.ActivePackageChanged += _ => RefreshSettingsWindow();
             _packageManager.InstalledPackagesChanged += _ => RefreshSettingsWindow();
 
+            Debug.Log("[ResidentAppController] InitializeAsync: アクティブパッケージを適用しています");
             await ApplyCurrentPackageAsync(cancellationToken);
             _apiKeyConfigured = _desktopAdapter.TryLoadSecret("llm.api_key", out _);
             RefreshSettingsWindow();
@@ -108,21 +125,25 @@ namespace Yuukei.Runtime
 
             if (isFirstLaunch)
             {
+                Debug.Log("[ResidentAppController] InitializeAsync: 初回起動のためスプラッシュを表示します");
                 await ShowSplashAsync(cancellationToken);
             }
 
             _pluginLoader.ActivateApprovedPlugins();
             _isInitialized = true;
+            Debug.Log("[ResidentAppController] InitializeAsync: 初期化が完了しました。アプリケーション稼働中です");
             await RaiseAppStartedAsync(isFirstLaunch, cancellationToken);
         }
 
         private void OnApplicationQuit()
         {
+            Debug.Log("[ResidentAppController] OnApplicationQuit: アプリケーション終了時の状態保存を実行します");
             SaveStateOnExit();
         }
 
         private void OnDestroy()
         {
+            Debug.Log("[ResidentAppController] OnDestroy: リソースを解放しています");
             ResetWindowController();
             _desktopAdapter?.Shutdown();
             _lifetime?.Cancel();
@@ -193,8 +214,10 @@ namespace Yuukei.Runtime
             _inputContextMonitor = gameObject.AddComponent<InputContextMonitor>();
         }
 
+        /// <summary>現在アクティブなパッケージのコンテンツを読み込んで適用する。</summary>
         private async UniTask ApplyCurrentPackageAsync(CancellationToken cancellationToken)
         {
+            Debug.Log("[ResidentAppController] ApplyCurrentPackageAsync: 現在のパッケージを適用しています");
             var content = _packageManager.GetResolvedActiveContent();
             var report = _packageManager.ValidateActivePackage();
             foreach (var warning in report.Warnings)
@@ -267,8 +290,10 @@ namespace Yuukei.Runtime
             Destroy(splash);
         }
 
+        /// <summary>グローバルショートカットキーが押されたときの処理。</summary>
         private void HandleShortcutTriggered(ShortcutAction action)
         {
+            Debug.Log("[ResidentAppController] HandleShortcutTriggered: ショートカット受信 action=" + action);
             switch (action)
             {
                 case ShortcutAction.OpenSettings:
@@ -290,8 +315,10 @@ namespace Yuukei.Runtime
             }
         }
 
+        /// <summary>システムトレイからのコマンドを処理する。</summary>
         private void HandleTrayCommandRequested(TrayCommand command)
         {
+            Debug.Log("[ResidentAppController] HandleTrayCommandRequested: トレイコマンド受信 command=" + command);
             switch (command)
             {
                 case TrayCommand.OpenSettings:
@@ -319,8 +346,10 @@ namespace Yuukei.Runtime
             _daihonBridge.RaiseEventAsync(canonicalName, context, _lifetime.Token).Forget();
         }
 
+        /// <summary>設定画面を開く。</summary>
         private UniTask OpenSettingsAsync()
         {
+            Debug.Log("[ResidentAppController] OpenSettingsAsync: 設定画面を開きます");
             _isSettingsVisible = true;
             ApplySettingsMode();
             UpdateShellState();
@@ -328,8 +357,10 @@ namespace Yuukei.Runtime
             return UniTask.CompletedTask;
         }
 
+        /// <summary>設定画面を閉じてマスコットモードに戻る。</summary>
         private UniTask CloseSettingsAsync()
         {
+            Debug.Log("[ResidentAppController] CloseSettingsAsync: 設定画面を閉じます");
             _isSettingsVisible = false;
             ApplyMascotMode();
             UpdateShellState();
@@ -337,31 +368,46 @@ namespace Yuukei.Runtime
             return UniTask.CompletedTask;
         }
 
+        /// <summary>アクティブパッケージを切り替える。</summary>
         private async UniTask SwitchPackageAsync(string packageId)
         {
+            Debug.Log("[ResidentAppController] SwitchPackageAsync: パッケージを切り替えます packageId=" + packageId);
             await _packageManager.SwitchActivePackageAsync(packageId, _lifetime.Token);
             _daihonBridge.CancelAndClear();
             await ApplyCurrentPackageAsync(_lifetime.Token);
             await FlushPendingSaveAsync(_lifetime.Token);
+            Debug.Log("[ResidentAppController] SwitchPackageAsync: パッケージ切替が完了しました");
         }
 
+        /// <summary>指定パッケージを削除する。</summary>
         private async UniTask DeletePackageAsync(string packageId)
         {
+            Debug.Log("[ResidentAppController] DeletePackageAsync: パッケージを削除します packageId=" + packageId);
             await _packageManager.DeletePackageAsync(packageId, _lifetime.Token);
             await ApplyCurrentPackageAsync(_lifetime.Token);
             await FlushPendingSaveAsync(_lifetime.Token);
+            Debug.Log("[ResidentAppController] DeletePackageAsync: パッケージ削除が完了しました");
         }
 
+        /// <summary>フォルダからパッケージをインポートする。</summary>
         private async UniTask ImportPackageAsync(string folderPath)
         {
+            Debug.Log("[ResidentAppController] ImportPackageAsync: パッケージをインポートします path=" + folderPath);
             if (await _packageManager.ImportPackageFromFolderAsync(folderPath, _lifetime.Token))
             {
+                Debug.Log("[ResidentAppController] ImportPackageAsync: インポートに成功しました");
                 RefreshSettingsWindow();
+            }
+            else
+            {
+                Debug.LogWarning("[ResidentAppController] ImportPackageAsync: インポートに失敗しました path=" + folderPath);
             }
         }
 
+        /// <summary>一時無効状態を切り替える。</summary>
         private async UniTask SetTemporarilyDisabledAsync(bool disabled)
         {
+            Debug.Log("[ResidentAppController] SetTemporarilyDisabledAsync: 一時無効=" + disabled);
             _persistenceStore.UpdateAppState(state => state.IsTemporarilyDisabled = disabled);
             _persistenceStore.RequestSave();
             _daihonBridge.SetTemporarilyDisabled(disabled);
@@ -371,8 +417,10 @@ namespace Yuukei.Runtime
             RefreshSettingsWindow();
         }
 
+        /// <summary>一時非表示状態を切り替える。</summary>
         private async UniTask SetTemporarilyHiddenAsync(bool hidden)
         {
+            Debug.Log("[ResidentAppController] SetTemporarilyHiddenAsync: 一時非表示=" + hidden);
             _persistenceStore.UpdateAppState(state => state.IsTemporarilyHidden = hidden);
             _persistenceStore.RequestSave();
             _mascotRuntime.SetVisible(!hidden && !_isSettingsVisible);
@@ -387,8 +435,10 @@ namespace Yuukei.Runtime
             RefreshSettingsWindow();
         }
 
+        /// <summary>ショートカット設定を保存する。</summary>
         private async UniTask SaveShortcutConfigAsync(ShortcutConfigData shortcutConfig)
         {
+            Debug.Log("[ResidentAppController] SaveShortcutConfigAsync: ショートカット設定を保存します");
             _persistenceStore.UpdateAppState(state => state.ShortcutConfig = shortcutConfig ?? new ShortcutConfigData());
             _desktopAdapter.ApplyShortcuts(_persistenceStore.Data.AppState.ShortcutConfig);
             _persistenceStore.RequestSave();
@@ -426,8 +476,10 @@ namespace Yuukei.Runtime
             return UniTask.CompletedTask;
         }
 
+        /// <summary>アプリケーションを終了する。</summary>
         private async UniTask ExitApplicationAsync()
         {
+            Debug.Log("[ResidentAppController] ExitApplicationAsync: アプリケーションを終了します");
             SaveStateOnExit();
 #if UNITY_EDITOR
             UnityEditor.EditorApplication.isPlaying = false;
@@ -443,8 +495,10 @@ namespace Yuukei.Runtime
             _persistenceStore?.SaveImmediately();
         }
 
+        /// <summary>マスコットモードに切り替える（透過ウィンドウ＋常に最前面）。</summary>
         private void ApplyMascotMode()
         {
+            Debug.Log("[ResidentAppController] ApplyMascotMode: マスコットモードに切り替えます");
             _settingsWindow.SetVisible(false);
             _runtimeCanvas.enabled = true;
             _windowController.isTransparent = true;
@@ -468,8 +522,10 @@ namespace Yuukei.Runtime
             _inputContextMonitor.SetInputEnabled(!_persistenceStore.Data.AppState.IsTemporarilyDisabled && !_persistenceStore.Data.AppState.IsTemporarilyHidden);
         }
 
+        /// <summary>設定モードに切り替える（通常ウィンドウ表示）。</summary>
         private void ApplySettingsMode()
         {
+            Debug.Log("[ResidentAppController] ApplySettingsMode: 設定モードに切り替えます");
             _runtimeCanvas.enabled = false;
             _speechBubbleController.Hide();
             _choiceOverlayController.CancelCurrent();

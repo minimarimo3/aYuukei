@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(wc -l /c/Users/minimarimo3/aaa/Yuukei/Yuukei/Assets/Scripts/Runtime/*.cs)",
+      "Bash(ls /c/Users/minimarimo3/aaa/Yuukei/Yuukei/Assets/Scripts/Runtime/*.cs)",
+      "Bash(ls /c/Users/minimarimo3/aaa/Yuukei/Yuukei/Assets/Editor/*.cs)",
+      "Bash(ls /c/Users/minimarimo3/aaa/Yuukei/Yuukei/Assets/Tests/EditMode/*.cs)"
+    ]
+  }
+}
