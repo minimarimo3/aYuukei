@@ -52,6 +52,10 @@ namespace Yuukei.Runtime
             [AliasRegistry.Normalize("lookright")] = ExpressionKey.LookRight,
         };
 
+        private static readonly string[] HoverMotionCandidates = { "hover", "float", "idle" };
+        private static readonly string[] GlideMotionCandidates = { "glide", "fly", "float_move", "move", "float", "idle" };
+        private static readonly string[] GlideApproachMotionCandidates = { "glide_approach", "approach", "glide", "hover", "float", "idle" };
+
         private sealed class LoadedMotion
         {
             public LoadedMotion(string name, RuntimeGltfInstance gltfInstance, Vrm10AnimationInstance animationInstance, ITimeControl timeControl, float durationSeconds)
@@ -72,6 +76,7 @@ namespace Yuukei.Runtime
 
         private Camera _worldCamera;
         private Transform _root;
+        private Transform _visualRoot;
         private Transform _anchor;
         private Transform _motionRoot;
         private GameObject _placeholderRoot;
@@ -88,11 +93,19 @@ namespace Yuukei.Runtime
         private Vector2 _desktopPosition;
         private Vector2 _desktopTarget;
         private bool _isVisible = true;
-        private string _currentMotion = "idle";
+        private string _currentMotion = string.Empty;
+        private string _manualMotionOverride;
         private float _motionPhase;
         private LoadedMotion _activeMotion;
         private float _activeMotionTime;
         private ExpressionKey? _activeExpression;
+        private readonly GlideLocomotionController _glideLocomotion = new GlideLocomotionController();
+        private MascotLocomotionState _locomotionState = MascotLocomotionState.IdleHover;
+        private float _hoverPauseRemaining;
+        private bool _isHoverHolding;
+        private float _lastBusyScore;
+        private Vector3 _visualOffset = Vector3.zero;
+        private Quaternion _visualRotation = Quaternion.identity;
 
         /// <summary>マスコットの初期化。ルートオブジェクト・アンカー・プレースホルダーを構築する。</summary>
         public void Initialize(Camera worldCamera)
@@ -102,11 +115,15 @@ namespace Yuukei.Runtime
 
             _root = new GameObject("MascotRoot").transform;
             _root.SetParent(transform, false);
-            _hitbox = _root.gameObject.AddComponent<BoxCollider>();
+
+            _visualRoot = new GameObject("VisualRoot").transform;
+            _visualRoot.SetParent(_root, false);
+
+            _hitbox = _visualRoot.gameObject.AddComponent<BoxCollider>();
             _hitbox.isTrigger = true;
 
             _anchor = new GameObject("SpeechAnchor").transform;
-            _anchor.SetParent(_root, false);
+            _anchor.SetParent(_visualRoot, false);
             _anchor.localPosition = new Vector3(0f, 2.1f, 0f);
 
             _motionRoot = new GameObject("MotionCacheRoot").transform;
@@ -122,6 +139,11 @@ namespace Yuukei.Runtime
 
         public string CharacterId => "default_mascot";
 
+        public void ApplyGlideSettings(GlideLocomotionSettings settings)
+        {
+            _glideLocomotion.ApplySettings(settings);
+        }
+
         public void SetDesktopContext(RectInt virtualDesktopBounds, IReadOnlyList<DesktopDisplayInfo> displays, IReadOnlyCollection<int> allowedDisplayIndices)
         {
             _virtualDesktopBounds = virtualDesktopBounds;
@@ -130,9 +152,16 @@ namespace Yuukei.Runtime
                 ? new HashSet<int>(allowedDisplayIndices)
                 : new HashSet<int>();
 
-            if (_desktopTarget == Vector2.zero)
+            if (!_glideLocomotion.HasPosition)
             {
-                ChooseNextTarget();
+                ChooseNextTarget(_lastBusyScore);
+                _glideLocomotion.SnapTo(_desktopTarget);
+                _desktopPosition = _desktopTarget;
+                ApplyDesktopPosition();
+            }
+            else if (!IsPointOnAllowedDisplay(_desktopTarget))
+            {
+                ChooseNextTarget(_lastBusyScore);
             }
 
             UpdateDisplayVisibility();
@@ -169,7 +198,7 @@ namespace Yuukei.Runtime
                 }
 
                 _vrmInstance = instance;
-                _vrmInstance.transform.SetParent(_root, false);
+                _vrmInstance.transform.SetParent(_visualRoot, false);
                 _vrmInstance.transform.localPosition = Vector3.zero;
                 _vrmInstance.transform.localRotation = Quaternion.identity;
                 _vrmInstance.transform.localScale = Vector3.one;
@@ -200,6 +229,7 @@ namespace Yuukei.Runtime
         {
             Debug.Log($"[MascotRuntime] モーション読み込み開始 (件数: {motionPaths?.Count ?? 0})");
             ClearLoadedMotions();
+            _manualMotionOverride = null;
 
             if (motionPaths != null)
             {
@@ -267,12 +297,7 @@ namespace Yuukei.Runtime
                 }
             }
 
-            if (!_loadedMotions.ContainsKey(AliasRegistry.Normalize(_currentMotion)) && _loadedMotions.ContainsKey(AliasRegistry.Normalize("idle")))
-            {
-                _currentMotion = "idle";
-            }
-
-            RebindCurrentMotion();
+            RefreshDesiredMotion(true);
             Debug.Log($"[MascotRuntime] モーション読み込み完了 (合計: {_loadedMotions.Count}件)");
         }
 
@@ -317,10 +342,21 @@ namespace Yuukei.Runtime
                 return;
             }
 
-            _currentMotion = name.Trim();
+            _manualMotionOverride = name.Trim();
             _motionPhase = 0f;
-            RebindCurrentMotion();
-            Debug.Log($"[MascotRuntime] モーション再生: {_currentMotion}");
+            RefreshDesiredMotion(true);
+            Debug.Log($"[MascotRuntime] モーション再生: {_manualMotionOverride}");
+        }
+
+        public void ClearMotionOverride()
+        {
+            if (string.IsNullOrWhiteSpace(_manualMotionOverride))
+            {
+                return;
+            }
+
+            _manualMotionOverride = null;
+            RefreshDesiredMotion(true);
         }
 
         /// <summary>小道具の表示・非表示を切り替える。</summary>
@@ -351,25 +387,39 @@ namespace Yuukei.Runtime
                 return;
             }
 
-            var dampedBusy = Mathf.Clamp01(busyScore);
-            var moveSpeed = Mathf.Lerp(190f, 45f, dampedBusy);
-            var arriveDistance = Mathf.Lerp(56f, 22f, dampedBusy);
-            var direction = _desktopTarget - _desktopPosition;
-            if (direction.magnitude <= arriveDistance)
+            _lastBusyScore = Mathf.Clamp01(busyScore);
+            if (!_glideLocomotion.HasPosition)
             {
-                ChooseNextTarget();
-                direction = _desktopTarget - _desktopPosition;
+                ChooseNextTarget(_lastBusyScore);
             }
 
-            var next = _desktopPosition + direction.normalized * moveSpeed * deltaTime;
-            if (direction.sqrMagnitude < (next - _desktopPosition).sqrMagnitude)
+            if (!IsPointOnAllowedDisplay(_desktopTarget))
             {
-                next = _desktopTarget;
+                ChooseNextTarget(_lastBusyScore);
             }
 
-            _desktopPosition = next;
+            if (_isHoverHolding)
+            {
+                _hoverPauseRemaining = Mathf.Max(0f, _hoverPauseRemaining - deltaTime);
+                if (_hoverPauseRemaining <= 0f)
+                {
+                    _isHoverHolding = false;
+                    ChooseNextTarget(_lastBusyScore);
+                }
+            }
+
+            var frame = _glideLocomotion.Step(deltaTime, _desktopTarget, _isHoverHolding, _lastBusyScore);
+            _desktopPosition = frame.LogicalPosition;
+            _locomotionState = frame.State;
             ApplyDesktopPosition();
-            AnimateMotion(deltaTime);
+            ApplyVisualPose(frame, deltaTime);
+            if (!_isHoverHolding && frame.ReachedTarget)
+            {
+                StartHoverPause();
+            }
+
+            RefreshDesiredMotion();
+            ApplyPlaceholderMotion(deltaTime);
             ProcessLoadedCharacter(deltaTime);
         }
 
@@ -386,8 +436,10 @@ namespace Yuukei.Runtime
 
         public void MoveByScreenDelta(Vector2 delta)
         {
-            _desktopPosition += delta;
+            _glideLocomotion.MoveBy(delta);
+            _desktopPosition = _glideLocomotion.LogicalPosition;
             _desktopTarget = _desktopPosition;
+            StartHoverPause(0.9f);
             ApplyDesktopPosition();
         }
 
@@ -395,7 +447,7 @@ namespace Yuukei.Runtime
         {
             _placeholderRoot = GameObject.CreatePrimitive(PrimitiveType.Capsule);
             _placeholderRoot.name = "PlaceholderMascot";
-            _placeholderRoot.transform.SetParent(_root, false);
+            _placeholderRoot.transform.SetParent(_visualRoot, false);
             _placeholderRoot.transform.localScale = new Vector3(1.1f, 1.5f, 1f);
             _placeholderRoot.transform.localPosition = new Vector3(0f, 1.5f, 0f);
             _placeholderBody = _placeholderRoot.GetComponent<Renderer>();
@@ -415,7 +467,7 @@ namespace Yuukei.Runtime
         {
             var halo = GameObject.CreatePrimitive(PrimitiveType.Cylinder);
             halo.name = "halo";
-            halo.transform.SetParent(_root, false);
+            halo.transform.SetParent(_visualRoot, false);
             halo.transform.localScale = new Vector3(0.8f, 0.03f, 0.8f);
             halo.transform.localPosition = new Vector3(0f, 3.1f, 0f);
             halo.GetComponent<Renderer>().material = new Material(Shader.Find("Universal Render Pipeline/Lit"))
@@ -433,7 +485,7 @@ namespace Yuukei.Runtime
             _props["halo"] = halo;
         }
 
-        private void ChooseNextTarget()
+        private void ChooseNextTarget(float busyScore = 0f)
         {
             var candidates = new List<RectInt>();
             foreach (var display in _displays)
@@ -454,15 +506,55 @@ namespace Yuukei.Runtime
             var selected = candidates[UnityEngine.Random.Range(0, candidates.Count)];
             var paddingX = Mathf.Min(160, Mathf.Max(40, selected.width / 6));
             var paddingY = Mathf.Min(140, Mathf.Max(40, selected.height / 6));
-            _desktopTarget = new Vector2(
-                UnityEngine.Random.Range(selected.xMin + paddingX, selected.xMax - paddingX),
-                UnityEngine.Random.Range(selected.yMin + paddingY, selected.yMax - paddingY));
+            float minX = selected.xMin + paddingX;
+            float maxX = selected.xMax - paddingX;
+            float minY = selected.yMin + paddingY;
+            float maxY = selected.yMax - paddingY;
 
-            if (_desktopPosition == Vector2.zero)
+            if (_glideLocomotion.HasPosition)
             {
-                _desktopPosition = _desktopTarget;
-                ApplyDesktopPosition();
+                var travelMultiplier = Mathf.Lerp(1f, _glideLocomotion.Settings.BusyTravelMultiplier, Mathf.Clamp01(busyScore));
+                var roamWidth = Mathf.Max(96f, selected.width * 0.28f * travelMultiplier);
+                var roamHeight = Mathf.Max(88f, selected.height * 0.24f * travelMultiplier);
+                var current = _desktopPosition;
+                minX = Mathf.Max(minX, current.x - roamWidth);
+                maxX = Mathf.Min(maxX, current.x + roamWidth);
+                minY = Mathf.Max(minY, current.y - roamHeight);
+                maxY = Mathf.Min(maxY, current.y + roamHeight);
             }
+
+            if (maxX <= minX)
+            {
+                minX = selected.xMin + paddingX;
+                maxX = selected.xMax - paddingX;
+            }
+
+            if (maxY <= minY)
+            {
+                minY = selected.yMin + paddingY;
+                maxY = selected.yMax - paddingY;
+            }
+
+            var nextTarget = new Vector2(
+                UnityEngine.Random.Range(minX, maxX),
+                UnityEngine.Random.Range(minY, maxY));
+
+            if (_glideLocomotion.HasPosition)
+            {
+                for (var attempt = 0; attempt < 5; attempt++)
+                {
+                    if ((nextTarget - _desktopPosition).sqrMagnitude >= 96f * 96f)
+                    {
+                        break;
+                    }
+
+                    nextTarget = new Vector2(
+                        UnityEngine.Random.Range(minX, maxX),
+                        UnityEngine.Random.Range(minY, maxY));
+                }
+            }
+
+            _desktopTarget = nextTarget;
         }
 
         private void ApplyDesktopPosition()
@@ -478,15 +570,36 @@ namespace Yuukei.Runtime
             var world = _worldCamera.ScreenToWorldPoint(screenPoint);
             world.z = 0f;
             _root.position = world;
+            UpdateDisplayVisibility();
         }
 
-        private void AnimateMotion(float deltaTime)
+        private void ApplyVisualPose(GlideLocomotionFrame frame, float deltaTime)
         {
+            if (_visualRoot == null)
+            {
+                return;
+            }
+
+            var followSpeed = Mathf.Max(0.01f, _glideLocomotion.Settings.VisualFollowSpeed);
+            var blend = 1f - Mathf.Exp(-followSpeed * Mathf.Max(0f, deltaTime));
+            _visualOffset = Vector3.Lerp(_visualOffset, frame.VisualOffset, blend);
+            _visualRotation = Quaternion.Slerp(_visualRotation, frame.VisualRotation, blend);
+            _visualRoot.localPosition = _visualOffset;
+            _visualRoot.localRotation = _visualRotation;
+        }
+
+        private void ApplyPlaceholderMotion(float deltaTime)
+        {
+            if (_placeholderRoot == null)
+            {
+                return;
+            }
+
             _motionPhase += deltaTime;
             var localPosition = new Vector3(0f, 1.5f, 0f);
             var localRotation = Quaternion.identity;
 
-            switch ((_currentMotion ?? string.Empty).ToLowerInvariant())
+            switch ((_manualMotionOverride ?? string.Empty).ToLowerInvariant())
             {
                 case "wave":
                 case "greeting":
@@ -496,25 +609,10 @@ namespace Yuukei.Runtime
                 case "jump":
                     localPosition.y += Mathf.Abs(Mathf.Sin(_motionPhase * 4f)) * 0.35f;
                     break;
-                case "float":
-                case "idle":
-                    localPosition.y += Mathf.Sin(_motionPhase * 2.3f) * 0.12f;
-                    break;
-                default:
-                    if (_activeMotion == null)
-                    {
-                        Debug.LogWarning($"[MascotRuntime] Unknown motion '{_currentMotion}'.");
-                    }
-
-                    _currentMotion = "idle";
-                    break;
             }
 
-            if (_placeholderRoot != null)
-            {
-                _placeholderRoot.transform.localPosition = localPosition;
-                _placeholderRoot.transform.localRotation = localRotation;
-            }
+            _placeholderRoot.transform.localPosition = localPosition;
+            _placeholderRoot.transform.localRotation = localRotation;
         }
 
         private void ProcessLoadedCharacter(float deltaTime)
@@ -687,7 +785,7 @@ namespace Yuukei.Runtime
 
         private void UpdateHitboxForLoadedCharacter()
         {
-            if (_hitbox == null || _vrmInstance == null)
+            if (_hitbox == null || _vrmInstance == null || _visualRoot == null)
             {
                 return;
             }
@@ -705,12 +803,75 @@ namespace Yuukei.Runtime
                 bounds.Encapsulate(renderers[i].bounds);
             }
 
-            var localCenter = _root.InverseTransformPoint(bounds.center);
+            var localCenter = _visualRoot.InverseTransformPoint(bounds.center);
             _hitbox.center = localCenter;
             _hitbox.size = new Vector3(
                 Mathf.Max(bounds.size.x, 0.6f),
                 Mathf.Max(bounds.size.y, 1.4f),
                 Mathf.Max(bounds.size.z, 0.4f));
+        }
+
+        private void StartHoverPause(float? durationSeconds = null)
+        {
+            _isHoverHolding = true;
+            _hoverPauseRemaining = durationSeconds ?? UnityEngine.Random.Range(
+                _glideLocomotion.Settings.HoverPauseMinSeconds,
+                Mathf.Max(_glideLocomotion.Settings.HoverPauseMinSeconds, _glideLocomotion.Settings.HoverPauseMaxSeconds));
+        }
+
+        private void RefreshDesiredMotion(bool forceRebind = false)
+        {
+            var desiredMotion = !string.IsNullOrWhiteSpace(_manualMotionOverride)
+                ? _manualMotionOverride
+                : ResolveAutomaticMotionName(_locomotionState);
+
+            desiredMotion ??= string.Empty;
+            if (!forceRebind && string.Equals(_currentMotion, desiredMotion, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+
+            _currentMotion = desiredMotion;
+            _motionPhase = 0f;
+            RebindCurrentMotion();
+        }
+
+        private string ResolveAutomaticMotionName(MascotLocomotionState locomotionState)
+        {
+            var candidates = locomotionState switch
+            {
+                MascotLocomotionState.Glide => GlideMotionCandidates,
+                MascotLocomotionState.GlideApproach => GlideApproachMotionCandidates,
+                _ => HoverMotionCandidates,
+            };
+
+            foreach (var candidate in candidates)
+            {
+                if (_loadedMotions.ContainsKey(AliasRegistry.Normalize(candidate)))
+                {
+                    return candidate;
+                }
+            }
+
+            return string.Empty;
+        }
+
+        private bool IsPointOnAllowedDisplay(Vector2 point)
+        {
+            if (_allowedDisplayIndices.Count == 0)
+            {
+                return true;
+            }
+
+            foreach (var display in _displays)
+            {
+                if (display.Bounds.Contains(Vector2Int.RoundToInt(point)))
+                {
+                    return _allowedDisplayIndices.Contains(display.Index);
+                }
+            }
+
+            return true;
         }
 
         private void UpdateDisplayVisibility()

@@ -15,6 +15,8 @@ namespace Yuukei.Runtime
     /// </summary>
     public sealed class ResidentAppController : MonoBehaviour
     {
+        [SerializeField] private GlideLocomotionSettings _glideLocomotionSettings = new GlideLocomotionSettings();
+
         private Canvas _runtimeCanvas;
         private Camera _mainCamera;
         private UniWindowController _windowController;
@@ -203,7 +205,9 @@ namespace Yuukei.Runtime
             scaler.uiScaleMode = CanvasScaler.ScaleMode.ScaleWithScreenSize;
             scaler.referenceResolution = new Vector2(1280f, 720f);
 
-            _mascotRuntime = gameObject.AddComponent<MascotRuntime>();
+            _glideLocomotionSettings ??= new GlideLocomotionSettings();
+            _mascotRuntime = GetComponent<MascotRuntime>() ?? gameObject.AddComponent<MascotRuntime>();
+            _mascotRuntime.ApplyGlideSettings(_glideLocomotionSettings);
             _mascotRuntime.Initialize(_mainCamera);
 
             _speechBubbleController = gameObject.AddComponent<SpeechBubbleController>();
