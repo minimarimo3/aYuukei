@@ -2,12 +2,12 @@
   "creator": "yuukei",
   "version": "v0.0.1",
   "download": "",
-  "license": "Placeholder starter package",
+  "license": "Yuukei starter package",
   "id": "0f479418-2a7a-4c1d-93d8-b6cf7af6bfc0",
   "character": "character.vrm",
   "daihon": [
-    "daihon/main.daihon",
-    "daihon/ティータイムの約束.daihon"
+    "Scripts/startup.daihon",
+    "Scripts/interactions.daihon"
   ],
   "textures": {
     "speechBubble": {

@@ -6,18 +6,17 @@ using UnityEngine;
 namespace Yuukei.Runtime
 {
     /// <summary>
-    /// 初回起動時のチュートリアル処理を担当するブートストラップ。
-    /// セーブファイルの有無で初回起動を判定し、スターターパッケージを準備する。
+    /// 初回起動判定とスターターパッケージの導入状態補正を担当するブートストラップ。
     /// </summary>
     public sealed class TutorialBootstrap
     {
         private readonly PersistenceStore _persistenceStore;
-        private readonly PackageManager _packageManager;
+        private readonly StarterPackageSeeder _starterPackageSeeder;
 
-        public TutorialBootstrap(PersistenceStore persistenceStore, PackageManager packageManager)
+        public TutorialBootstrap(PersistenceStore persistenceStore, StarterPackageSeeder starterPackageSeeder)
         {
             _persistenceStore = persistenceStore;
-            _packageManager = packageManager;
+            _starterPackageSeeder = starterPackageSeeder;
         }
 
         /// <summary>セーブファイルの存在で初回起動かどうかを判定する。</summary>
@@ -28,15 +27,19 @@ namespace Yuukei.Runtime
             return result;
         }
 
-        /// <summary>初回起動時にスターターパッケージの準備を行う。</summary>
+        /// <summary>初回起動判定を返しつつ、スターターパッケージが未導入ならシードする。</summary>
         public async UniTask<bool> EnsureFirstLaunchPackageStateAsync(CancellationToken cancellationToken)
         {
             var isFirstLaunch = IsFirstLaunch();
             if (isFirstLaunch)
             {
-                Debug.Log("[TutorialBootstrap] EnsureFirstLaunchPackageStateAsync: 初回起動のためスターターパッケージを準備します");
-                await _packageManager.EnsureStarterPackageAsync(cancellationToken);
-                Debug.Log("[TutorialBootstrap] EnsureFirstLaunchPackageStateAsync: スターターパッケージの準備が完了しました");
+                Debug.Log("[TutorialBootstrap] EnsureFirstLaunchPackageStateAsync: 初回起動です。スターターパッケージを確認します");
+            }
+
+            var seeded = await _starterPackageSeeder.EnsureInstalledAsync(cancellationToken);
+            if (seeded)
+            {
+                Debug.Log("[TutorialBootstrap] EnsureFirstLaunchPackageStateAsync: スターターパッケージを StreamingAssets から導入しました");
             }
 
             return isFirstLaunch;

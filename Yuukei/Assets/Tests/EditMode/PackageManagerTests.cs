@@ -13,6 +13,24 @@ using Yuukei.Runtime;
 
 namespace Yuukei.Tests.EditMode
 {
+    internal static class PackageTestUtility
+    {
+        public static string BuildManifestJson(string creator, string version, string id, string character, params string[] daihonPaths)
+        {
+            var escapedPaths = string.Join(",\n", daihonPaths.Select(path => $"    \"{path}\""));
+            return
+$@"{{
+  ""creator"": ""{creator}"",
+  ""version"": ""{version}"",
+  ""id"": ""{id}"",
+  ""character"": ""{character}"",
+  ""daihon"": [
+{escapedPaths}
+  ]
+}}";
+        }
+    }
+
     public sealed class PackageManagerTests
     {
         [Test]
@@ -39,7 +57,7 @@ namespace Yuukei.Tests.EditMode
 
             File.WriteAllText(
                 Path.Combine(installRoot, "manifest.json"),
-                BuildManifestJson("creator", "v1", "guid", "character.vrm", "Scripts/first.daihon", "Scripts/second.daihon"));
+                PackageTestUtility.BuildManifestJson("creator", "v1", "guid", "character.vrm", "Scripts/first.daihon", "Scripts/second.daihon"));
 
             try
             {
@@ -94,7 +112,7 @@ namespace Yuukei.Tests.EditMode
 
             File.WriteAllText(
                 Path.Combine(installRoot, "manifest.json"),
-                BuildManifestJson(
+                PackageTestUtility.BuildManifestJson(
                     "creator",
                     "v1",
                     "guid",
@@ -123,33 +141,34 @@ namespace Yuukei.Tests.EditMode
         }
 
         [Test]
-        public async Task EnsureStarterPackageAsync_UsesProvidedExampleSource()
+        public async Task InitializeAsync_SelectsStarterPackageWhenActivePackageIdIsEmpty()
         {
-            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-starter-" + Guid.NewGuid().ToString("N"));
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-starter-init-" + Guid.NewGuid().ToString("N"));
             var packageRoot = Path.Combine(tempDirectory, "package");
-            var exampleRoot = Path.Combine(tempDirectory, "examples", "yuukei_default_package");
-            Directory.CreateDirectory(Path.Combine(exampleRoot, "daihon"));
-            File.WriteAllText(Path.Combine(exampleRoot, "character.vrm"), string.Empty);
-            File.WriteAllText(Path.Combine(exampleRoot, "daihon", "main.daihon"), "## Main\n### Scene\n合図: ＠app_started\n「starter」");
+            var starterRoot = Path.Combine(packageRoot, StarterPackageMetadata.InstallDirectoryName);
+            var otherRoot = Path.Combine(packageRoot, "creator-v9-other");
+
+            Directory.CreateDirectory(Path.Combine(starterRoot, "Scripts"));
+            Directory.CreateDirectory(otherRoot);
+            File.WriteAllText(Path.Combine(starterRoot, "character.vrm"), string.Empty);
+            File.WriteAllText(Path.Combine(starterRoot, "Scripts", "main.daihon"), "## Main\n### Scene\n合図: ＠app_started\n「starter」");
             File.WriteAllText(
-                Path.Combine(exampleRoot, "manifest.json"),
-                BuildManifestJson("yuukei", "v0.0.1", "0f479418-2a7a-4c1d-93d8-b6cf7af6bfc0", "character.vrm", "daihon/main.daihon"));
+                Path.Combine(starterRoot, "manifest.json"),
+                PackageTestUtility.BuildManifestJson(StarterPackageMetadata.Creator, StarterPackageMetadata.Version, StarterPackageMetadata.PackageId, "character.vrm", "Scripts/main.daihon"));
+            File.WriteAllText(
+                Path.Combine(otherRoot, "manifest.json"),
+                PackageTestUtility.BuildManifestJson("creator", "v9", "other", "character.vrm"));
 
             try
             {
                 var store = new PersistenceStore(Path.Combine(tempDirectory, "save.json"));
-                var packageManager = new PackageManager(
-                    store,
-                    packageRootDirectory: packageRoot,
-                    starterPackageSourceDirectory: exampleRoot);
+                var packageManager = new PackageManager(store, packageRootDirectory: packageRoot);
 
-                await packageManager.EnsureStarterPackageAsync();
-                await packageManager.ReloadInstalledPackagesAsync();
+                await packageManager.InitializeAsync();
 
-                Assert.That(packageManager.InstalledPackages.Count, Is.EqualTo(1));
-                Assert.That(packageManager.InstalledPackages[0].PackageId, Is.EqualTo("0f479418-2a7a-4c1d-93d8-b6cf7af6bfc0"));
-                Assert.That(File.Exists(Path.Combine(packageManager.InstalledPackages[0].RootDirectory, "manifest.json")), Is.True);
-                Assert.That(File.Exists(Path.Combine(packageManager.InstalledPackages[0].RootDirectory, "daihon", "main.daihon")), Is.True);
+                Assert.That(packageManager.ActivePackage, Is.Not.Null);
+                Assert.That(packageManager.ActivePackage.PackageId, Is.EqualTo(StarterPackageMetadata.PackageId));
+                Assert.That(store.Data.ActivePackageId, Is.EqualTo(StarterPackageMetadata.PackageId));
             }
             finally
             {
@@ -167,8 +186,8 @@ namespace Yuukei.Tests.EditMode
             Directory.CreateDirectory(firstInstallRoot);
             Directory.CreateDirectory(secondInstallRoot);
 
-            File.WriteAllText(Path.Combine(firstInstallRoot, "manifest.json"), BuildManifestJson("creator", "v1", "first", "character.vrm"));
-            File.WriteAllText(Path.Combine(secondInstallRoot, "manifest.json"), BuildManifestJson("creator", "v1", "second", "character.vrm"));
+            File.WriteAllText(Path.Combine(firstInstallRoot, "manifest.json"), PackageTestUtility.BuildManifestJson("creator", "v1", "first", "character.vrm"));
+            File.WriteAllText(Path.Combine(secondInstallRoot, "manifest.json"), PackageTestUtility.BuildManifestJson("creator", "v1", "second", "character.vrm"));
 
             try
             {
@@ -194,19 +213,131 @@ namespace Yuukei.Tests.EditMode
             }
         }
 
-        private static string BuildManifestJson(string creator, string version, string id, string character, params string[] daihonPaths)
+    }
+
+    public sealed class StarterPackageSeederTests
+    {
+        [Test]
+        public async Task EnsureInstalledAsync_CopiesStarterPackageFromSourceDirectory()
         {
-            var escapedPaths = string.Join(",\n", daihonPaths.Select(path => $"    \"{path}\""));
-            return
-$@"{{
-  ""creator"": ""{creator}"",
-  ""version"": ""{version}"",
-  ""id"": ""{id}"",
-  ""character"": ""{character}"",
-  ""daihon"": [
-{escapedPaths}
-  ]
-}}";
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-seeder-" + Guid.NewGuid().ToString("N"));
+            var packageRoot = Path.Combine(tempDirectory, "package");
+            var sourceRoot = Path.Combine(tempDirectory, "streaming", "StarterPackages", StarterPackageMetadata.InstallDirectoryName);
+            Directory.CreateDirectory(Path.Combine(sourceRoot, "Scripts"));
+            Directory.CreateDirectory(Path.Combine(sourceRoot, "Textures"));
+            File.WriteAllText(Path.Combine(sourceRoot, "character.vrm"), string.Empty);
+            File.WriteAllText(Path.Combine(sourceRoot, "Scripts", "main.daihon"), "## Main\n### Scene\n合図: ＠app_started\n「starter」");
+            File.WriteAllText(Path.Combine(sourceRoot, "Textures", "speech_bubble_bg.png"), "bg");
+            File.WriteAllText(Path.Combine(sourceRoot, "Textures", "speech_bubble_tail.png"), "tail");
+            File.WriteAllText(
+                Path.Combine(sourceRoot, "manifest.json"),
+                PackageTestUtility.BuildManifestJson(
+                    StarterPackageMetadata.Creator,
+                    StarterPackageMetadata.Version,
+                    StarterPackageMetadata.PackageId,
+                    "character.vrm",
+                    "Scripts/main.daihon"));
+
+            try
+            {
+                var seeder = new StarterPackageSeeder(
+                    packageRoot,
+                    new FileSystemStarterPackageSource(sourceRoot));
+
+                var copied = await seeder.EnsureInstalledAsync();
+                var installRoot = Path.Combine(packageRoot, StarterPackageMetadata.InstallDirectoryName);
+
+                Assert.That(copied, Is.True);
+                Assert.That(File.Exists(Path.Combine(installRoot, "manifest.json")), Is.True);
+                Assert.That(File.Exists(Path.Combine(installRoot, "Scripts", "main.daihon")), Is.True);
+                Assert.That(File.Exists(Path.Combine(installRoot, "Textures", "speech_bubble_bg.png")), Is.True);
+            }
+            finally
+            {
+                Directory.Delete(tempDirectory, true);
+            }
+        }
+
+        [Test]
+        public async Task EnsureInstalledAsync_DoesNotOverwriteExistingStarterPackage()
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-seeder-skip-" + Guid.NewGuid().ToString("N"));
+            var packageRoot = Path.Combine(tempDirectory, "package");
+            var sourceRoot = Path.Combine(tempDirectory, "streaming", "StarterPackages", StarterPackageMetadata.InstallDirectoryName);
+            Directory.CreateDirectory(Path.Combine(sourceRoot, "Scripts"));
+            File.WriteAllText(Path.Combine(sourceRoot, "character.vrm"), string.Empty);
+            File.WriteAllText(Path.Combine(sourceRoot, "Scripts", "main.daihon"), "## Main\n### Scene\n合図: ＠app_started\n「starter source」");
+            File.WriteAllText(
+                Path.Combine(sourceRoot, "manifest.json"),
+                PackageTestUtility.BuildManifestJson(
+                    StarterPackageMetadata.Creator,
+                    StarterPackageMetadata.Version,
+                    StarterPackageMetadata.PackageId,
+                    "character.vrm",
+                    "Scripts/main.daihon"));
+
+            try
+            {
+                var seeder = new StarterPackageSeeder(
+                    packageRoot,
+                    new FileSystemStarterPackageSource(sourceRoot));
+
+                await seeder.EnsureInstalledAsync();
+
+                var installedScriptPath = Path.Combine(packageRoot, StarterPackageMetadata.InstallDirectoryName, "Scripts", "main.daihon");
+                File.WriteAllText(installedScriptPath, "locally modified");
+
+                var copiedAgain = await seeder.EnsureInstalledAsync();
+
+                Assert.That(copiedAgain, Is.False);
+                Assert.That(File.ReadAllText(installedScriptPath), Is.EqualTo("locally modified"));
+            }
+            finally
+            {
+                Directory.Delete(tempDirectory, true);
+            }
+        }
+    }
+
+    public sealed class TutorialBootstrapTests
+    {
+        [Test]
+        public async Task EnsureFirstLaunchPackageStateAsync_SeedsStarterPackageEvenWhenSaveAlreadyExists()
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-bootstrap-" + Guid.NewGuid().ToString("N"));
+            var savePath = Path.Combine(tempDirectory, "save.json");
+            var packageRoot = Path.Combine(tempDirectory, "package");
+            var sourceRoot = Path.Combine(tempDirectory, "streaming", "StarterPackages", StarterPackageMetadata.InstallDirectoryName);
+            Directory.CreateDirectory(Path.Combine(sourceRoot, "Scripts"));
+            File.WriteAllText(savePath, "{\"activePackageId\":\"\"}");
+            File.WriteAllText(Path.Combine(sourceRoot, "character.vrm"), string.Empty);
+            File.WriteAllText(Path.Combine(sourceRoot, "Scripts", "main.daihon"), "## Main\n### Scene\n合図: ＠app_started\n「starter」");
+            File.WriteAllText(
+                Path.Combine(sourceRoot, "manifest.json"),
+                PackageTestUtility.BuildManifestJson(
+                    StarterPackageMetadata.Creator,
+                    StarterPackageMetadata.Version,
+                    StarterPackageMetadata.PackageId,
+                    "character.vrm",
+                    "Scripts/main.daihon"));
+
+            try
+            {
+                var store = new PersistenceStore(savePath);
+                await store.LoadAsync();
+                var bootstrap = new TutorialBootstrap(
+                    store,
+                    new StarterPackageSeeder(packageRoot, new FileSystemStarterPackageSource(sourceRoot)));
+
+                var isFirstLaunch = await bootstrap.EnsureFirstLaunchPackageStateAsync(CancellationToken.None);
+
+                Assert.That(isFirstLaunch, Is.False);
+                Assert.That(File.Exists(Path.Combine(packageRoot, StarterPackageMetadata.InstallDirectoryName, "manifest.json")), Is.True);
+            }
+            finally
+            {
+                Directory.Delete(tempDirectory, true);
+            }
         }
     }
 

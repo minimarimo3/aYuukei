@@ -11,30 +11,23 @@ namespace Yuukei.Runtime
 {
     /// <summary>
     /// パッケージの検出・切り替え・インポート・削除を管理するクラス。
-    /// 起動時にスターターパッケージの存在を保証し、永続化されたアクティブパッケージを復元する。
+    /// 導入済みパッケージ一覧の再構築と、永続化されたアクティブパッケージの復元を担当する。
     /// </summary>
     public sealed class PackageManager : IPackageContentResolver
     {
-        private const string StarterPackageId = "0f479418-2a7a-4c1d-93d8-b6cf7af6bfc0";
-        private const string StarterCreator = "yuukei";
-        private const string StarterVersion = "v0.0.1";
-
         private readonly PersistenceStore _persistenceStore;
         private readonly IPackageContentResolver _contentResolver;
         private readonly string _packageRootDirectory;
-        private readonly string _starterPackageSourceDirectory;
         private readonly List<ResolvedPackage> _installedPackages = new List<ResolvedPackage>();
 
         public PackageManager(
             PersistenceStore persistenceStore,
             IPackageContentResolver contentResolver = null,
-            string packageRootDirectory = null,
-            string starterPackageSourceDirectory = null)
+            string packageRootDirectory = null)
         {
             _persistenceStore = persistenceStore;
             _contentResolver = contentResolver ?? this;
             _packageRootDirectory = packageRootDirectory ?? Path.Combine(Application.persistentDataPath, "package");
-            _starterPackageSourceDirectory = starterPackageSourceDirectory ?? GetDefaultStarterPackageSourceDirectory();
         }
 
         public event Action<ResolvedPackage> ActivePackageChanged;
@@ -43,17 +36,16 @@ namespace Yuukei.Runtime
         public IReadOnlyList<ResolvedPackage> InstalledPackages => _installedPackages;
         public ResolvedPackage ActivePackage { get; private set; }
 
-        /// <summary>初期化: スターター保証 → パッケージ一覧読み込み → アクティブ復元。</summary>
+        /// <summary>初期化: パッケージ一覧読み込み → アクティブ復元。</summary>
         public async UniTask InitializeAsync(CancellationToken cancellationToken = default)
         {
             Debug.Log("[PackageManager] 初期化を開始します");
             Directory.CreateDirectory(_packageRootDirectory);
-            await EnsureStarterPackageAsync(cancellationToken);
             await ReloadInstalledPackagesAsync(cancellationToken);
 
             var desiredId = _persistenceStore.Data.ActivePackageId;
             var resolved = _installedPackages.FirstOrDefault(package => package.PackageId == desiredId)
-                ?? _installedPackages.FirstOrDefault(package => package.PackageId == StarterPackageId)
+                ?? _installedPackages.FirstOrDefault(package => package.PackageId == StarterPackageMetadata.PackageId)
                 ?? _installedPackages.FirstOrDefault();
 
             Debug.Log($"[PackageManager] 検出パッケージ数={_installedPackages.Count}, 希望ID={desiredId}, 解決={resolved?.PackageId ?? "(なし)"}");
@@ -64,56 +56,6 @@ namespace Yuukei.Runtime
             }
 
             Debug.Log("[PackageManager] 初期化が完了しました");
-        }
-
-        /// <summary>スターターパッケージが未導入なら作成する。</summary>
-        public async UniTask EnsureStarterPackageAsync(CancellationToken cancellationToken = default)
-        {
-            var starterDirectory = GetInstallDirectory(StarterCreator, StarterVersion, StarterPackageId);
-            if (Directory.Exists(starterDirectory) && File.Exists(Path.Combine(starterDirectory, "manifest.json")))
-            {
-                Debug.Log("[PackageManager] スターターパッケージは既に存在します");
-                return;
-            }
-
-            Debug.Log("[PackageManager] スターターパッケージが見つかりません。作成します");
-
-            if (TryInstallStarterPackageFromExample(starterDirectory))
-            {
-                Debug.Log("[PackageManager] サンプルからスターターパッケージをコピーしました");
-                return;
-            }
-
-            Directory.CreateDirectory(starterDirectory);
-            Directory.CreateDirectory(Path.Combine(starterDirectory, "Scripts"));
-            Directory.CreateDirectory(Path.Combine(starterDirectory, "Textures"));
-
-            var manifest = new PackageManifest
-            {
-                Creator = StarterCreator,
-                Version = StarterVersion,
-                Id = StarterPackageId,
-                License = "Placeholder starter package",
-                Daihon = new List<string> { "Scripts/main.daihon" },
-                Character = "character.vrm",
-                Textures = new Dictionary<string, PackageTextureManifest>
-                {
-                    ["speechBubble"] = new PackageTextureManifest
-                    {
-                        Background = "Textures/speech_bubble_bg.png",
-                        Tail = "Textures/speech_bubble_tail.png",
-                    }
-                }
-            };
-
-            var manifestJson = JsonConvert.SerializeObject(manifest, Formatting.Indented);
-            await File.WriteAllTextAsync(Path.Combine(starterDirectory, "manifest.json"), manifestJson, cancellationToken);
-            await File.WriteAllTextAsync(Path.Combine(starterDirectory, "Scripts", "main.daihon"), BuildStarterScript(), cancellationToken);
-
-            await WriteSolidTextureAsync(Path.Combine(starterDirectory, "Textures", "speech_bubble_bg.png"), new Color32(30, 38, 55, 245), cancellationToken);
-            await WriteSolidTextureAsync(Path.Combine(starterDirectory, "Textures", "speech_bubble_tail.png"), new Color32(30, 38, 55, 245), cancellationToken);
-
-            Debug.Log("[PackageManager] スターターパッケージを新規生成しました");
         }
 
         /// <summary>パッケージルートを再スキャンし、一覧を更新する。</summary>
@@ -204,7 +146,7 @@ namespace Yuukei.Runtime
                 Directory.Delete(destination, true);
             }
 
-            CopyDirectory(folderPath, destination);
+            await PackageDirectoryUtility.CopyDirectoryAsync(folderPath, destination, cancellationToken);
             await ReloadInstalledPackagesAsync(cancellationToken);
             Debug.Log($"[PackageManager] インポート成功: {manifest.Id}");
             return true;
@@ -227,7 +169,8 @@ namespace Yuukei.Runtime
 
             if (ActivePackage?.PackageId == packageId)
             {
-                var fallback = _installedPackages.FirstOrDefault(entry => entry.PackageId == StarterPackageId) ?? _installedPackages.FirstOrDefault();
+                var fallback = _installedPackages.FirstOrDefault(entry => entry.PackageId == StarterPackageMetadata.PackageId)
+                    ?? _installedPackages.FirstOrDefault();
                 if (fallback != null)
                 {
                     await SwitchActivePackageAsync(fallback.PackageId, cancellationToken);
@@ -348,48 +291,6 @@ namespace Yuukei.Runtime
             return Path.Combine(_packageRootDirectory, $"{creator}-{version}-{guid}");
         }
 
-        private bool TryInstallStarterPackageFromExample(string destinationDirectory)
-        {
-            if (string.IsNullOrWhiteSpace(_starterPackageSourceDirectory) || !Directory.Exists(_starterPackageSourceDirectory))
-            {
-                return false;
-            }
-
-            try
-            {
-                if (Directory.Exists(destinationDirectory))
-                {
-                    Directory.Delete(destinationDirectory, true);
-                }
-
-                CopyDirectory(_starterPackageSourceDirectory, destinationDirectory);
-                return true;
-            }
-            catch (Exception exception)
-            {
-                Debug.LogWarning($"[PackageManager] Failed to copy starter package example from '{_starterPackageSourceDirectory}'. Falling back to generated package. {exception.Message}");
-                return false;
-            }
-        }
-
-        private static string GetDefaultStarterPackageSourceDirectory()
-        {
-            var assetsDirectory = Application.dataPath;
-            if (string.IsNullOrWhiteSpace(assetsDirectory))
-            {
-                return string.Empty;
-            }
-
-            var projectRoot = Directory.GetParent(assetsDirectory)?.FullName;
-            var repositoryRoot = Directory.GetParent(projectRoot ?? string.Empty)?.FullName;
-            if (string.IsNullOrWhiteSpace(repositoryRoot))
-            {
-                return string.Empty;
-            }
-
-            return Path.Combine(repositoryRoot, "examples", "yuukei_default_package");
-        }
-
         private static string GetDictionaryValue(IReadOnlyDictionary<string, string> dictionary, string key)
         {
             if (dictionary == null || string.IsNullOrWhiteSpace(key))
@@ -462,74 +363,6 @@ namespace Yuukei.Runtime
             }
 
             return package.GetAbsolutePath(packageRelativePath);
-        }
-
-        private static string BuildStarterScript()
-        {
-            return
-@"## YuukeiStarter
-初期値:
-    チュートリアル済み=いいえ
-
-### 起動時の挨拶
-合図: ＠起動時
-「こんにちは。デスクトップで一緒に過ごそう。」
-＜show_dialog 「設定と終了はショートカットかメニューから開けます。」＞
-
-### クリック反応
-合図: ＠クリック
-「呼んだ？」
-
-### ダブルクリック反応
-合図: ＠ダブルクリック
-_返答=＜show_choices 「よろしく」 「あとで」＞
-※（_返答=「よろしく」）:
-    「よろしくね。」
-おわり
-
-### 放置
-合図: ＠放置
-「作業中かな。邪魔しないようにするね。」
-
-### 定期発火
-合図: ＠定期発火
-「ここにいるよ。」
-
-### 既定
-「今日もよろしくね。」
-";
-        }
-
-        private static async UniTask WriteSolidTextureAsync(string path, Color32 color, CancellationToken cancellationToken)
-        {
-            var texture = new Texture2D(4, 4, TextureFormat.RGBA32, false);
-            var pixels = new Color32[16];
-            for (var i = 0; i < pixels.Length; i++)
-            {
-                pixels[i] = color;
-            }
-
-            texture.SetPixels32(pixels);
-            texture.Apply();
-            var bytes = texture.EncodeToPNG();
-            UnityEngine.Object.Destroy(texture);
-            await File.WriteAllBytesAsync(path, bytes, cancellationToken);
-        }
-
-        private static void CopyDirectory(string sourceDirectory, string destinationDirectory)
-        {
-            Directory.CreateDirectory(destinationDirectory);
-            foreach (var file in Directory.GetFiles(sourceDirectory))
-            {
-                var targetFile = Path.Combine(destinationDirectory, Path.GetFileName(file));
-                File.Copy(file, targetFile, true);
-            }
-
-            foreach (var directory in Directory.GetDirectories(sourceDirectory))
-            {
-                var targetDirectory = Path.Combine(destinationDirectory, Path.GetFileName(directory));
-                CopyDirectory(directory, targetDirectory);
-            }
         }
     }
 }

@@ -21,6 +21,7 @@ namespace Yuukei.Runtime
         private IDesktopPlatformAdapter _desktopAdapter;
         private PersistenceStore _persistenceStore;
         private PackageManager _packageManager;
+        private StarterPackageSeeder _starterPackageSeeder;
         private TutorialBootstrap _tutorialBootstrap;
         private PluginLoader _pluginLoader;
         private AliasRegistry _aliasRegistry;
@@ -84,7 +85,8 @@ namespace Yuukei.Runtime
 
             Debug.Log("[ResidentAppController] InitializeAsync: パッケージマネージャーと各サービスを構築しています");
             _packageManager = new PackageManager(_persistenceStore);
-            _tutorialBootstrap = new TutorialBootstrap(_persistenceStore, _packageManager);
+            _starterPackageSeeder = new StarterPackageSeeder();
+            _tutorialBootstrap = new TutorialBootstrap(_persistenceStore, _starterPackageSeeder);
             _pluginLoader = new PluginLoader();
             _pluginLoader.StateChanged += RefreshSettingsWindow;
             _aliasRegistry = new AliasRegistry();

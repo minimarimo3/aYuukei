@@ -1,0 +1,25 @@
+{
+  "creator": "yuukei",
+  "version": "v0.0.1",
+  "download": "",
+  "license": "Yuukei starter package",
+  "id": "0f479418-2a7a-4c1d-93d8-b6cf7af6bfc0",
+  "character": "character.vrm",
+  "daihon": [
+    "Scripts/startup.daihon",
+    "Scripts/interactions.daihon"
+  ],
+  "textures": {
+    "speechBubble": {
+      "background": "Textures/speech_bubble_bg.png",
+      "tail": "Textures/speech_bubble_tail.png"
+    }
+  },
+  "assets": [],
+  "motions": [],
+  "dlls": [],
+  "aliases": {
+    "events": {},
+    "functions": {}
+  }
+}
