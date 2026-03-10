@@ -7,8 +7,7 @@
   "character": "character.vrm",
   "daihon": [
     "daihon/main.daihon",
-    "daihon/ティータイムの約束.daihon",
-    "daihon/ヤンデレ.daihon"
+    "daihon/ティータイムの約束.daihon"
   ],
   "textures": {
     "speechBubble": {
