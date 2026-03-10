@@ -3,7 +3,8 @@
   "rootNamespace": "Yuukei.Tests.EditMode",
   "references": [
     "Yuukei.Runtime",
-    "UniTask"
+    "UniTask",
+    "Kirurobo.UniWindowController"
   ],
   "includePlatforms": [
     "Editor"

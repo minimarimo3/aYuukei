@@ -6,10 +6,19 @@ using Cysharp.Threading.Tasks;
 using UniGLTF;
 using UniVRM10;
 using UnityEngine;
+using UnityEngine.Animations;
+using UnityEngine.Playables;
 using UnityEngine.Timeline;
 
 namespace Yuukei.Runtime
 {
+    internal enum MascotMotionPresentationMode
+    {
+        Automatic,
+        ManualOverride,
+        DragOverride,
+    }
+
     /// <summary>
     /// マスコットキャラクターの表示・アニメーション・表情・小道具を管理するランタイムコントローラー。
     /// VRMキャラクターの読み込み、モーション再生、デスクトップ上の移動処理を担当する。
@@ -74,6 +83,20 @@ namespace Yuukei.Runtime
             public float DurationSeconds { get; }
         }
 
+        private readonly struct ControlRigPoseSnapshot
+        {
+            public ControlRigPoseSnapshot(Vector3 localPosition, Quaternion localRotation, Vector3 localScale)
+            {
+                LocalPosition = localPosition;
+                LocalRotation = localRotation;
+                LocalScale = localScale;
+            }
+
+            public Vector3 LocalPosition { get; }
+            public Quaternion LocalRotation { get; }
+            public Vector3 LocalScale { get; }
+        }
+
         private Camera _worldCamera;
         private Transform _root;
         private Transform _visualRoot;
@@ -85,6 +108,7 @@ namespace Yuukei.Runtime
         private readonly Dictionary<string, GameObject> _props = new Dictionary<string, GameObject>(StringComparer.OrdinalIgnoreCase);
         private readonly Dictionary<string, LoadedMotion> _loadedMotions = new Dictionary<string, LoadedMotion>(StringComparer.Ordinal);
         private readonly Dictionary<string, ExpressionKey> _expressionKeys = new Dictionary<string, ExpressionKey>(StringComparer.Ordinal);
+        private readonly Dictionary<HumanBodyBones, ControlRigPoseSnapshot> _controlRigRestPose = new Dictionary<HumanBodyBones, ControlRigPoseSnapshot>();
 
         private Vrm10Instance _vrmInstance;
         private RectInt _virtualDesktopBounds;
@@ -106,6 +130,20 @@ namespace Yuukei.Runtime
         private float _lastBusyScore;
         private Vector3 _visualOffset = Vector3.zero;
         private Quaternion _visualRotation = Quaternion.identity;
+        private AnimationClip _dragMotionClip;
+        private float _dragMotionFadeInSeconds = 0.12f;
+        private float _dragMotionFadeOutSeconds = 0.16f;
+        private bool _isUserDragMotionRequested;
+        private float _dragMotionBlendWeight;
+        private float _dragMotionTime;
+        private PlayableGraph _dragMotionGraph;
+        private AnimationMixerPlayable _dragMotionMixer;
+        private AnimationClipPlayable _dragMotionPlayable;
+        private bool _hasDragMotionPlayable;
+
+        internal MascotMotionPresentationMode DebugPresentationMode => ResolveMotionPresentationMode();
+        internal bool DebugIsUserDragMotionRequested => _isUserDragMotionRequested;
+        internal float DebugDragMotionBlendWeight => _dragMotionBlendWeight;
 
         /// <summary>マスコットの初期化。ルートオブジェクト・アンカー・プレースホルダーを構築する。</summary>
         public void Initialize(Camera worldCamera)
@@ -144,6 +182,50 @@ namespace Yuukei.Runtime
             _glideLocomotion.ApplySettings(settings);
         }
 
+        public void ConfigureDragMotion(DragMotionSettings settings)
+        {
+            var resolvedSettings = settings ?? new DragMotionSettings();
+            _dragMotionClip = resolvedSettings.Clip;
+            _dragMotionFadeInSeconds = Mathf.Max(0.01f, resolvedSettings.FadeInSeconds);
+            _dragMotionFadeOutSeconds = Mathf.Max(0.01f, resolvedSettings.FadeOutSeconds);
+            Debug.Log(_dragMotionClip == null
+                ? "[MascotRuntime] Drag motion clip is not assigned."
+                : $"[MascotRuntime] Drag motion configured: clip='{_dragMotionClip.name}', length={_dragMotionClip.length:F3}s");
+            RebuildDragMotionPlayableGraph();
+        }
+
+        public void SetUserDragMotionActive(bool active)
+        {
+            if (_isUserDragMotionRequested == active)
+            {
+                return;
+            }
+
+            _isUserDragMotionRequested = active;
+            if (active)
+            {
+                _dragMotionTime = 0f;
+                if (_hasDragMotionPlayable)
+                {
+                    _dragMotionPlayable.SetTime(0d);
+                    _dragMotionGraph.Evaluate(0f);
+                }
+            }
+        }
+
+        public void CancelUserDragMotionImmediately()
+        {
+            _isUserDragMotionRequested = false;
+            _dragMotionBlendWeight = 0f;
+            _dragMotionTime = 0f;
+            ApplyDragMotionWeight(0f);
+            if (_hasDragMotionPlayable)
+            {
+                _dragMotionPlayable.SetTime(0d);
+                _dragMotionGraph.Evaluate(0f);
+            }
+        }
+
         public void SetDesktopContext(RectInt virtualDesktopBounds, IReadOnlyList<DesktopDisplayInfo> displays, IReadOnlyCollection<int> allowedDisplayIndices)
         {
             _virtualDesktopBounds = virtualDesktopBounds;
@@ -173,6 +255,7 @@ namespace Yuukei.Runtime
             Debug.Log($"[MascotRuntime] キャラクター読み込み開始: {characterPath}");
             StopActiveMotion();
             ClearExpressionCatalog();
+            ResetDragMotionPlaybackState();
 
             if (_vrmInstance != null)
             {
@@ -205,6 +288,7 @@ namespace Yuukei.Runtime
                 _vrmInstance.UpdateType = Vrm10Instance.UpdateTypes.None;
                 _placeholderRoot.SetActive(false);
 
+                RebuildDragMotionPlayableGraph();
                 RebuildExpressionCatalog();
                 UpdateHitboxForLoadedCharacter();
                 RebindCurrentMotion();
@@ -221,6 +305,7 @@ namespace Yuukei.Runtime
 
                 _placeholderRoot.SetActive(true);
                 UpdateHitboxForPlaceholder();
+                RebuildDragMotionPlayableGraph();
             }
         }
 
@@ -375,6 +460,11 @@ namespace Yuukei.Runtime
         /// <summary>マスコット全体の表示・非表示を切り替える。</summary>
         public void SetVisible(bool visible)
         {
+            if (!visible)
+            {
+                CancelUserDragMotionImmediately();
+            }
+
             _isVisible = visible;
             UpdateDisplayVisibility();
             Debug.Log($"[MascotRuntime] 表示状態を変更: {(visible ? "表示" : "非表示")}");
@@ -622,20 +712,36 @@ namespace Yuukei.Runtime
                 return;
             }
 
+            AdvanceActiveMotion(deltaTime);
+            UpdateDragMotionBlend(deltaTime);
+
+            var runtime = _vrmInstance.Runtime;
+            if (ShouldDriveDragMotion())
+            {
+                runtime.VrmAnimation = null;
+                if (!ApplyBaseMotionPoseToControlRig())
+                {
+                    ApplyCachedControlRigPose();
+                }
+
+                EvaluateDragMotionPlayable(deltaTime);
+                ApplyExpressionOverride(useActiveMotionSource: false);
+                runtime.Process();
+                return;
+            }
+
             if (_activeMotion != null)
             {
-                _activeMotionTime = Mathf.Repeat(_activeMotionTime + deltaTime, _activeMotion.DurationSeconds);
-                _activeMotion.TimeControl.SetTime(_activeMotionTime);
                 ApplyExpressionOverride();
-                _vrmInstance.Runtime.VrmAnimation = _activeMotion.AnimationInstance;
+                runtime.VrmAnimation = _activeMotion.AnimationInstance;
             }
             else
             {
-                _vrmInstance.Runtime.VrmAnimation = null;
-                ApplyExpressionOverride();
+                runtime.VrmAnimation = null;
+                ApplyExpressionOverride(useActiveMotionSource: false);
             }
 
-            _vrmInstance.Runtime.Process();
+            runtime.Process();
         }
 
         private void RebuildExpressionCatalog()
@@ -685,9 +791,9 @@ namespace Yuukei.Runtime
             _expressionKeys.Clear();
         }
 
-        private void ApplyExpressionOverride()
+        private void ApplyExpressionOverride(bool useActiveMotionSource = true)
         {
-            if (_activeMotion != null)
+            if (useActiveMotionSource && _activeMotion != null)
             {
                 if (!_activeExpression.HasValue)
                 {
@@ -718,6 +824,202 @@ namespace Yuukei.Runtime
             }
 
             _vrmInstance.Runtime.Expression.SetWeight(_activeExpression.Value, 1f);
+        }
+
+        private void AdvanceActiveMotion(float deltaTime)
+        {
+            if (_activeMotion == null)
+            {
+                return;
+            }
+
+            _activeMotionTime = Mathf.Repeat(_activeMotionTime + Mathf.Max(0f, deltaTime), _activeMotion.DurationSeconds);
+            _activeMotion.TimeControl.SetTime(_activeMotionTime);
+        }
+
+        private void UpdateDragMotionBlend(float deltaTime)
+        {
+            if (!CanUseDragMotion())
+            {
+                _dragMotionBlendWeight = 0f;
+                ApplyDragMotionWeight(0f);
+                return;
+            }
+
+            var targetWeight = _isUserDragMotionRequested ? 1f : 0f;
+            var fadeSeconds = targetWeight > _dragMotionBlendWeight ? _dragMotionFadeInSeconds : _dragMotionFadeOutSeconds;
+            if (fadeSeconds <= 0f)
+            {
+                _dragMotionBlendWeight = targetWeight;
+            }
+            else
+            {
+                _dragMotionBlendWeight = Mathf.MoveTowards(
+                    _dragMotionBlendWeight,
+                    targetWeight,
+                    Mathf.Max(0f, deltaTime) / fadeSeconds);
+            }
+
+            ApplyDragMotionWeight(_dragMotionBlendWeight);
+        }
+
+        private bool ShouldDriveDragMotion()
+        {
+            return _dragMotionBlendWeight > 0.001f && CanUseDragMotion();
+        }
+
+        private bool CanUseDragMotion()
+        {
+            return _hasDragMotionPlayable
+                && _dragMotionClip != null
+                && _vrmInstance != null
+                && _vrmInstance.Runtime?.ControlRig?.ControlRigAnimator != null;
+        }
+
+        private void ApplyDragMotionWeight(float weight)
+        {
+            if (_hasDragMotionPlayable)
+            {
+                _dragMotionMixer.SetInputWeight(0, Mathf.Clamp01(weight));
+            }
+        }
+
+        private bool ApplyBaseMotionPoseToControlRig()
+        {
+            var controlRig = _vrmInstance?.Runtime?.ControlRig;
+            if (_activeMotion == null || controlRig == null)
+            {
+                return false;
+            }
+
+            Vrm10Retarget.Retarget(_activeMotion.AnimationInstance.ControlRig, (controlRig, controlRig));
+            return true;
+        }
+
+        private void ApplyCachedControlRigPose()
+        {
+            var controlRig = _vrmInstance?.Runtime?.ControlRig;
+            if (controlRig == null || _controlRigRestPose.Count == 0)
+            {
+                return;
+            }
+
+            foreach (var (boneType, controlBone) in controlRig.Bones)
+            {
+                if (!_controlRigRestPose.TryGetValue(boneType, out var snapshot))
+                {
+                    continue;
+                }
+
+                controlBone.ControlBone.localPosition = snapshot.LocalPosition;
+                controlBone.ControlBone.localRotation = snapshot.LocalRotation;
+                controlBone.ControlBone.localScale = snapshot.LocalScale;
+            }
+        }
+
+        private void EvaluateDragMotionPlayable(float deltaTime)
+        {
+            if (!CanUseDragMotion())
+            {
+                return;
+            }
+
+            var clipDuration = Mathf.Max(_dragMotionClip.length, 0.01f);
+            _dragMotionTime = Mathf.Repeat(_dragMotionTime + Mathf.Max(0f, deltaTime), clipDuration);
+            _dragMotionPlayable.SetTime(_dragMotionTime);
+            _dragMotionGraph.Evaluate(0f);
+        }
+
+        private MascotMotionPresentationMode ResolveMotionPresentationMode()
+        {
+            if (_isUserDragMotionRequested && _dragMotionClip != null)
+            {
+                return MascotMotionPresentationMode.DragOverride;
+            }
+
+            return !string.IsNullOrWhiteSpace(_manualMotionOverride)
+                ? MascotMotionPresentationMode.ManualOverride
+                : MascotMotionPresentationMode.Automatic;
+        }
+
+        private void ResetDragMotionPlaybackState()
+        {
+            CancelUserDragMotionImmediately();
+            DestroyDragMotionPlayableGraph();
+            _controlRigRestPose.Clear();
+        }
+
+        private void RebuildDragMotionPlayableGraph()
+        {
+            DestroyDragMotionPlayableGraph();
+            _controlRigRestPose.Clear();
+
+            if (_vrmInstance == null)
+            {
+                Debug.Log("[MascotRuntime] Drag motion graph rebuild skipped: VRM instance is not loaded yet.");
+                return;
+            }
+
+            var controlRig = _vrmInstance.Runtime?.ControlRig;
+            if (controlRig == null)
+            {
+                Debug.LogWarning("[MascotRuntime] Drag motion graph rebuild skipped: ControlRig is unavailable.");
+                return;
+            }
+
+            CaptureControlRigRestPose(controlRig);
+            if (_dragMotionClip == null || _dragMotionClip.length <= 0f)
+            {
+                Debug.LogWarning("[MascotRuntime] Drag motion graph rebuild skipped: drag clip is missing or has zero length.");
+                return;
+            }
+
+            var animator = controlRig.ControlRigAnimator;
+            if (animator == null)
+            {
+                Debug.LogWarning("[MascotRuntime] Drag motion graph rebuild skipped: ControlRig animator is unavailable.");
+                return;
+            }
+
+            _dragMotionGraph = PlayableGraph.Create("MascotDragMotion");
+            _dragMotionGraph.SetTimeUpdateMode(DirectorUpdateMode.Manual);
+            _dragMotionMixer = AnimationMixerPlayable.Create(_dragMotionGraph, 1);
+            _dragMotionPlayable = AnimationClipPlayable.Create(_dragMotionGraph, _dragMotionClip);
+            _dragMotionPlayable.SetSpeed(0d);
+            _dragMotionPlayable.SetApplyFootIK(false);
+            _dragMotionPlayable.SetApplyPlayableIK(false);
+
+            _dragMotionGraph.Connect(_dragMotionPlayable, 0, _dragMotionMixer, 0);
+            _dragMotionMixer.SetInputWeight(0, 0f);
+            var output = AnimationPlayableOutput.Create(_dragMotionGraph, "MascotDragMotion", animator);
+            output.SetSourcePlayable(_dragMotionMixer);
+            _dragMotionGraph.Play();
+            _hasDragMotionPlayable = true;
+            Debug.Log($"[MascotRuntime] Drag motion playable ready: clip='{_dragMotionClip.name}', animator='{animator.name}'.");
+        }
+
+        private void CaptureControlRigRestPose(Vrm10RuntimeControlRig controlRig)
+        {
+            foreach (var (boneType, controlBone) in controlRig.Bones)
+            {
+                _controlRigRestPose[boneType] = new ControlRigPoseSnapshot(
+                    controlBone.ControlBone.localPosition,
+                    controlBone.ControlBone.localRotation,
+                    controlBone.ControlBone.localScale);
+            }
+        }
+
+        private void DestroyDragMotionPlayableGraph()
+        {
+            if (_dragMotionGraph.IsValid())
+            {
+                _dragMotionGraph.Destroy();
+            }
+
+            _dragMotionGraph = default;
+            _dragMotionMixer = default;
+            _dragMotionPlayable = default;
+            _hasDragMotionPlayable = false;
         }
 
         private void RebindCurrentMotion()
@@ -897,6 +1199,7 @@ namespace Yuukei.Runtime
 
         private void OnDestroy()
         {
+            ResetDragMotionPlaybackState();
             ClearLoadedMotions();
         }
     }

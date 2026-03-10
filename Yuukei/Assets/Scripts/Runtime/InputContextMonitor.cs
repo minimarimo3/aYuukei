@@ -69,7 +69,7 @@ namespace Yuukei.Runtime
             _enabled = enabled;
             if (!enabled)
             {
-                CancelPendingClick();
+                CancelPointerState(clearDragMotion: true);
             }
         }
 
@@ -131,6 +131,7 @@ namespace Yuukei.Runtime
                 if (dragDelta.magnitude >= DragThresholdPixels)
                 {
                     _dragging = true;
+                    _mascotRuntime.SetUserDragMotionActive(true);
                     EmitPointerEvent("character_drag_started", position);
                 }
             }
@@ -146,6 +147,7 @@ namespace Yuukei.Runtime
             {
                 if (_pointerDownOnMascot && _dragging)
                 {
+                    _mascotRuntime.SetUserDragMotionActive(false);
                     EmitPointerEvent("character_drag_ended", position);
                 }
                 else if (_pointerDownOnMascot)
@@ -153,8 +155,7 @@ namespace Yuukei.Runtime
                     HandleClickRelease(position);
                 }
 
-                _pointerDownOnMascot = false;
-                _dragging = false;
+                CancelPointerState(clearDragMotion: false);
             }
         }
 
@@ -280,9 +281,21 @@ namespace Yuukei.Runtime
             _singleClickDelay = null;
         }
 
-        private void OnDestroy()
+        private void CancelPointerState(bool clearDragMotion)
         {
             CancelPendingClick();
+            if (clearDragMotion && _dragging)
+            {
+                _mascotRuntime?.CancelUserDragMotionImmediately();
+            }
+
+            _pointerDownOnMascot = false;
+            _dragging = false;
+        }
+
+        private void OnDestroy()
+        {
+            CancelPointerState(clearDragMotion: true);
             if (_windowController != null)
             {
                 _windowController.OnDropFiles -= OnDropFiles;

@@ -9,13 +9,25 @@ using UnityEngine.UI;
 
 namespace Yuukei.Runtime
 {
+    [Serializable]
+    public sealed class DragMotionSettings
+    {
+        public AnimationClip Clip;
+        [Min(0.01f)] public float FadeInSeconds = 0.12f;
+        [Min(0.01f)] public float FadeOutSeconds = 0.16f;
+    }
+
     /// <summary>
     /// 常駐アプリケーション全体のライフサイクルを管理するメインコントローラー。
     /// 初期化、パッケージ切替、設定画面の表示切替、トレイコマンド処理などを統括する。
     /// </summary>
     public sealed class ResidentAppController : MonoBehaviour
     {
+        private const string DefaultDragMotionSourceAssetPath = "Assets/Motions/X Bot@Female Dynamic Pose.fbx";
+        private const string DefaultDragMotionClipAssetPath = "Assets/Motions/X Bot@Female Dynamic Pose.anim";
+
         [SerializeField] private GlideLocomotionSettings _glideLocomotionSettings = new GlideLocomotionSettings();
+        [SerializeField] private DragMotionSettings _dragMotionSettings = new DragMotionSettings();
 
         private Canvas _runtimeCanvas;
         private Camera _mainCamera;
@@ -49,6 +61,62 @@ namespace Yuukei.Runtime
             BuildRuntimeObjects();
             Debug.Log("[ResidentAppController] Awake: シーン参照とランタイムオブジェクトの構築が完了しました");
         }
+
+#if UNITY_EDITOR
+        private void OnValidate()
+        {
+            _dragMotionSettings ??= new DragMotionSettings();
+            var currentClipPath = _dragMotionSettings.Clip == null
+                ? string.Empty
+                : UnityEditor.AssetDatabase.GetAssetPath(_dragMotionSettings.Clip);
+            var shouldAssignDefaultClip = _dragMotionSettings.Clip == null
+                || string.Equals(currentClipPath, DefaultDragMotionSourceAssetPath, StringComparison.Ordinal)
+                || string.Equals(currentClipPath, DefaultDragMotionClipAssetPath, StringComparison.Ordinal);
+            if (!shouldAssignDefaultClip)
+            {
+                return;
+            }
+
+            var defaultClip = EnsureDefaultDragMotionClip();
+            if (defaultClip == null || _dragMotionSettings.Clip == defaultClip)
+            {
+                return;
+            }
+
+            _dragMotionSettings.Clip = defaultClip;
+            UnityEditor.EditorUtility.SetDirty(this);
+            if (gameObject.scene.IsValid())
+            {
+                UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(gameObject.scene);
+            }
+        }
+
+        private static AnimationClip EnsureDefaultDragMotionClip()
+        {
+            var extractedClip = UnityEditor.AssetDatabase.LoadAssetAtPath<AnimationClip>(DefaultDragMotionClipAssetPath);
+            if (extractedClip != null)
+            {
+                return extractedClip;
+            }
+
+            foreach (var asset in UnityEditor.AssetDatabase.LoadAllAssetsAtPath(DefaultDragMotionSourceAssetPath))
+            {
+                if (asset is not AnimationClip sourceClip || sourceClip.name.StartsWith("__preview__", StringComparison.Ordinal))
+                {
+                    continue;
+                }
+
+                var clipCopy = UnityEngine.Object.Instantiate(sourceClip);
+                clipCopy.name = Path.GetFileNameWithoutExtension(DefaultDragMotionClipAssetPath);
+                UnityEditor.AssetDatabase.CreateAsset(clipCopy, DefaultDragMotionClipAssetPath);
+                UnityEditor.AssetDatabase.SaveAssets();
+                UnityEditor.AssetDatabase.ImportAsset(DefaultDragMotionClipAssetPath, UnityEditor.ImportAssetOptions.ForceSynchronousImport);
+                return UnityEditor.AssetDatabase.LoadAssetAtPath<AnimationClip>(DefaultDragMotionClipAssetPath);
+            }
+
+            return null;
+        }
+#endif
 
         /// <summary>非同期初期化処理を開始する。</summary>
         private void Start()
@@ -206,8 +274,10 @@ namespace Yuukei.Runtime
             scaler.referenceResolution = new Vector2(1280f, 720f);
 
             _glideLocomotionSettings ??= new GlideLocomotionSettings();
+            _dragMotionSettings ??= new DragMotionSettings();
             _mascotRuntime = GetComponent<MascotRuntime>() ?? gameObject.AddComponent<MascotRuntime>();
             _mascotRuntime.ApplyGlideSettings(_glideLocomotionSettings);
+            _mascotRuntime.ConfigureDragMotion(_dragMotionSettings);
             _mascotRuntime.Initialize(_mainCamera);
 
             _speechBubbleController = gameObject.AddComponent<SpeechBubbleController>();
