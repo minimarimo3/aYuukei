@@ -8,7 +8,7 @@
         "com.unity.nuget.newtonsoft-json": "3.0.2",
         "com.unity.test-framework": "1.1.31"
       },
-      "hash": "f130dcb739cff2d72da2098078197de928b6d808"
+      "hash": "a7c715fb1f2b7741b46f5ee48c70aa3bb1189bd2"
     },
     "com.cysharp.unitask": {
       "version": "https://github.com/Cysharp/UniTask.git?path=src/UniTask/Assets/Plugins/UniTask",
