@@ -233,6 +233,8 @@ call chain:
 - Daihon のセリフ block -> `SpeechBubbleController.ShowDialogueAsync()`
 - `show_dialog(...)` -> `SpeechBubbleController.ShowImmediate()`
 - `SpeechBubbleController.LateUpdate()` がアンカー追従
+- `SpeechBubble` root 配下に `Body(RectTransform + RectMask2D)`、`Background(Image)`、`Tail(Image)` を分離し、tail は body のサイズ計算に参加しない
+- `Background(Image)` は `Body` 内でアスペクト比を維持したまま cover 表示される
 
 #### 選択 UI
 
@@ -407,7 +409,7 @@ single source:
 world / local:
 
 - 吹き出しは Canvas 上の `RectTransform.anchoredPosition`
-- screen space overlay ではなく camera 付き Canvas なので、実装上は screen/world 変換を経由した UI 座標
+- `ScreenSpaceOverlay` Canvas 上で `WorldToScreenPoint()` → `ScreenPointToLocalPointInRectangle()` を経由して UI 座標へ変換している
 
 更新タイミング:
 
@@ -621,6 +623,9 @@ Unity MCP で確認できた root:
 
 - 同時に一つだけ
 - 新表示で `_displayVersion` が進み、旧 auto-hide が無効化される
+- body 幅は Canvas 幅の 25% を上限にし、TMP preferred size から高さを伸ばす
+- text style は `SpeechBubbleController.ApplyTextStyle()` で外部から差し替え可能。既定は 24pt / 黒文字
+- tail は sprite の上辺を body 接続側として扱う `Image.Type.Simple` で、body が画面端へ clamp されたときは body 下辺上を横移動する
 
 まず見るべきファイル:
 
