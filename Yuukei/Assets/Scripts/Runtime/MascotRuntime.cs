@@ -169,6 +169,7 @@ namespace Yuukei.Runtime
 
             CreatePlaceholder();
             CreateProps();
+            ScaleCharacterToScreenFraction();
             UpdateHitboxForPlaceholder();
             Debug.Log("[MascotRuntime] 初期化完了");
         }
@@ -288,6 +289,7 @@ namespace Yuukei.Runtime
                 _vrmInstance.UpdateType = Vrm10Instance.UpdateTypes.None;
                 _placeholderRoot.SetActive(false);
 
+                ScaleCharacterToScreenFraction();
                 RebuildDragMotionPlayableGraph();
                 RebuildExpressionCatalog();
                 UpdateHitboxForLoadedCharacter();
@@ -1083,6 +1085,60 @@ namespace Yuukei.Runtime
 
             _hitbox.center = new Vector3(0f, 1.6f, 0f);
             _hitbox.size = new Vector3(1.6f, 3.4f, 1.4f);
+        }
+
+        private void ScaleCharacterToScreenFraction()
+        {
+            if (_worldCamera == null || !_worldCamera.orthographic)
+            {
+                return;
+            }
+
+            var targetHeight = _worldCamera.orthographicSize * 2f / 4f;
+
+            Renderer[] renderers = null;
+            if (_vrmInstance != null)
+            {
+                renderers = _vrmInstance.GetComponentsInChildren<Renderer>();
+            }
+
+            if (renderers != null && renderers.Length > 0)
+            {
+                var bounds = renderers[0].bounds;
+                for (var i = 1; i < renderers.Length; i++)
+                {
+                    bounds.Encapsulate(renderers[i].bounds);
+                }
+
+                var currentHeight = bounds.size.y;
+                if (currentHeight > 0.01f)
+                {
+                    var scale = targetHeight / currentHeight;
+                    _vrmInstance.transform.localScale = Vector3.one * scale;
+
+                    _anchor.localPosition = new Vector3(0f, targetHeight + 0.1f, 0f);
+                    UpdateHaloPosition(targetHeight);
+                }
+            }
+            else
+            {
+                // プレースホルダー用: カプセルの高さは2（デフォルト）* scaleY
+                var placeholderDefaultHeight = 2f * 1.5f; // localScale.y = 1.5
+                var scale = targetHeight / placeholderDefaultHeight;
+                _placeholderRoot.transform.localScale = new Vector3(1.1f * scale, 1.5f * scale, 1f * scale);
+                _placeholderRoot.transform.localPosition = new Vector3(0f, 1.5f * scale, 0f);
+
+                _anchor.localPosition = new Vector3(0f, targetHeight + 0.1f, 0f);
+                UpdateHaloPosition(targetHeight);
+            }
+        }
+
+        private void UpdateHaloPosition(float characterHeight)
+        {
+            if (_props.TryGetValue("halo", out var halo) && halo != null)
+            {
+                halo.transform.localPosition = new Vector3(0f, characterHeight + 0.1f, 0f);
+            }
         }
 
         private void UpdateHitboxForLoadedCharacter()
