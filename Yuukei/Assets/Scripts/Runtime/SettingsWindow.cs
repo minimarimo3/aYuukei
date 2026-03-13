@@ -70,6 +70,7 @@ namespace Yuukei.Runtime
         private Func<UniTask> _clearDllApprovalsRequested;
 
         public void Initialize(
+            Font font,
             Func<UniTask> closeRequested,
             Func<string, UniTask> switchPackageRequested,
             Func<string, UniTask> deletePackageRequested,
@@ -106,6 +107,10 @@ namespace Yuukei.Runtime
             _document = gameObject.AddComponent<UIDocument>();
             _document.panelSettings = panelSettings;
             _root = _document.rootVisualElement;
+            if (font != null)
+            {
+                _root.style.unityFont = new StyleFont(font);
+            }
             _root.style.flexGrow = 1f;
             _root.style.flexDirection = FlexDirection.Row;
             _root.style.backgroundColor = new Color(0.96f, 0.96f, 0.93f);

@@ -28,6 +28,7 @@ namespace Yuukei.Runtime
 
         [SerializeField] private GlideLocomotionSettings _glideLocomotionSettings = new GlideLocomotionSettings();
         [SerializeField] private DragMotionSettings _dragMotionSettings = new DragMotionSettings();
+        [SerializeField] private Font _settingsFont;
 
         private Canvas _runtimeCanvas;
         private Camera _mainCamera;
@@ -170,6 +171,7 @@ namespace Yuukei.Runtime
 
             Debug.Log("[ResidentAppController] InitializeAsync: 設定画面を初期化しています");
             _settingsWindow.Initialize(
+                _settingsFont,
                 CloseSettingsAsync,
                 SwitchPackageAsync,
                 DeletePackageAsync,

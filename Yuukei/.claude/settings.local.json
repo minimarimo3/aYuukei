@@ -5,7 +5,8 @@
       "Bash(ls /c/Users/minimarimo3/aaa/Yuukei/Yuukei/Assets/Scripts/Runtime/*.cs)",
       "Bash(ls /c/Users/minimarimo3/aaa/Yuukei/Yuukei/Assets/Editor/*.cs)",
       "Bash(ls /c/Users/minimarimo3/aaa/Yuukei/Yuukei/Assets/Tests/EditMode/*.cs)",
-      "mcp__mcp-registry__search_mcp_registry"
+      "mcp__mcp-registry__search_mcp_registry",
+      "Bash(xargs grep:*)"
     ]
   }
 }
