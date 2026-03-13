@@ -249,7 +249,8 @@ namespace Yuukei.Runtime
 
             _mainCamera.orthographic = true;
             _mainCamera.orthographicSize = 5f;
-            _mainCamera.transform.position = new Vector3(0f, 0f, -10f);
+            _mainCamera.transform.position = new Vector3(0f, 0f, 10f);
+            _mainCamera.transform.rotation = Quaternion.Euler(0f, 180f, 0f);
             _mainCamera.clearFlags = CameraClearFlags.SolidColor;
             _mainCamera.backgroundColor = Color.clear;
 
