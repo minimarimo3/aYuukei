@@ -1,5 +1,4 @@
 using NUnit.Framework;
-using UnityEngine;
 using Yuukei.Runtime;
 
 namespace Yuukei.Tests.EditMode
@@ -7,107 +6,43 @@ namespace Yuukei.Tests.EditMode
     public sealed class GlideLocomotionControllerTests
     {
         [Test]
-        public void Step_WhenHoldingPosition_RemainsIdleAndKeepsLogicalPosition()
+        public void Defaults_MatchFloatingMotionAlgorithm()
         {
-            var controller = new GlideLocomotionController(new GlideLocomotionSettings());
-            controller.SnapTo(Vector2.zero);
+            var settings = new GlideLocomotionSettings();
 
-            GlideLocomotionFrame frame = default;
-            for (var i = 0; i < 10; i++)
-            {
-                frame = controller.Step(0.1f, Vector2.zero, true, 0f);
-            }
-
-            Assert.That(frame.State, Is.EqualTo(MascotLocomotionState.IdleHover));
-            Assert.That(frame.LogicalPosition.x, Is.EqualTo(0f).Within(0.001f));
-            Assert.That(frame.LogicalPosition.y, Is.EqualTo(0f).Within(0.001f));
-            Assert.That(frame.LogicalVelocity.magnitude, Is.EqualTo(0f).Within(0.001f));
-            Assert.That(Mathf.Abs(frame.VisualOffset.y), Is.GreaterThan(0.001f));
+            Assert.That(settings.FloatAmplitudeY, Is.EqualTo(0.06f).Within(0.0001f));
+            Assert.That(settings.FloatFrequency1, Is.EqualTo(0.55f).Within(0.0001f));
+            Assert.That(settings.FloatFrequency2, Is.EqualTo(1.10f).Within(0.0001f));
+            Assert.That(settings.FloatFrequency3, Is.EqualTo(0.28f).Within(0.0001f));
+            Assert.That(settings.FloatAmplitudeX, Is.EqualTo(0.018f).Within(0.0001f));
+            Assert.That(settings.TiltAmplitudeDeg, Is.EqualTo(1.8f).Within(0.0001f));
+            Assert.That(settings.TiltFrequency, Is.EqualTo(0.40f).Within(0.0001f));
         }
 
         [Test]
-        public void Step_TransitionsFromGlideToApproachAndSettlesAtTarget()
+        public void Clone_CopiesFloatingParameters()
         {
-            var controller = new GlideLocomotionController(new GlideLocomotionSettings
+            var source = new GlideLocomotionSettings
             {
-                GlideMaxSpeed = 120f,
-                Acceleration = 480f,
-                Deceleration = 520f,
-                SlowRadius = 72f,
-                ArrivalRadius = 6f,
-                StopSpeed = 4f,
-            });
+                FloatAmplitudeY = 0.12f,
+                FloatFrequency1 = 0.41f,
+                FloatFrequency2 = 0.92f,
+                FloatFrequency3 = 0.25f,
+                FloatAmplitudeX = 0.023f,
+                TiltAmplitudeDeg = 2.4f,
+                TiltFrequency = 0.33f,
+            };
 
-            controller.SnapTo(Vector2.zero);
+            var clone = source.Clone();
 
-            var sawGlide = false;
-            var sawApproach = false;
-            GlideLocomotionFrame frame = default;
-            for (var i = 0; i < 200; i++)
-            {
-                frame = controller.Step(0.05f, new Vector2(180f, 0f), false, 0f);
-                sawGlide |= frame.State == MascotLocomotionState.Glide;
-                sawApproach |= frame.State == MascotLocomotionState.GlideApproach;
-                if (frame.State == MascotLocomotionState.IdleHover && frame.ReachedTarget)
-                {
-                    break;
-                }
-            }
-
-            Assert.That(sawGlide, Is.True);
-            Assert.That(sawApproach, Is.True);
-            Assert.That(frame.State, Is.EqualTo(MascotLocomotionState.IdleHover));
-            Assert.That(frame.ReachedTarget, Is.True);
-            Assert.That(frame.LogicalPosition.x, Is.EqualTo(180f).Within(0.5f));
-            Assert.That(frame.LogicalVelocity.magnitude, Is.LessThan(0.1f));
-        }
-
-        [Test]
-        public void Step_WithHighBusyScore_ReducesVelocityMagnitude()
-        {
-            var relaxedController = new GlideLocomotionController(new GlideLocomotionSettings
-            {
-                GlideMaxSpeed = 200f,
-                Acceleration = 1000f,
-                Deceleration = 1000f,
-            });
-            var busyController = new GlideLocomotionController(new GlideLocomotionSettings
-            {
-                GlideMaxSpeed = 200f,
-                Acceleration = 1000f,
-                Deceleration = 1000f,
-                BusySpeedMultiplier = 0.3f,
-            });
-
-            relaxedController.SnapTo(Vector2.zero);
-            busyController.SnapTo(Vector2.zero);
-
-            var relaxedFrame = relaxedController.Step(0.25f, new Vector2(800f, 0f), false, 0f);
-            var busyFrame = busyController.Step(0.25f, new Vector2(800f, 0f), false, 1f);
-
-            Assert.That(busyFrame.LogicalVelocity.magnitude, Is.LessThan(relaxedFrame.LogicalVelocity.magnitude));
-        }
-
-        [Test]
-        public void Step_WhenMovingHorizontally_AddsHorizontalSwayAndTilt()
-        {
-            var controller = new GlideLocomotionController(new GlideLocomotionSettings
-            {
-                GlideMaxSpeed = 180f,
-                Acceleration = 900f,
-                Deceleration = 900f,
-                GlideSwayAmplitude = 0.2f,
-                TiltAmount = 10f,
-            });
-
-            controller.SnapTo(Vector2.zero);
-
-            var frame = controller.Step(0.1f, new Vector2(300f, 0f), false, 0f);
-            var tiltedUp = frame.VisualRotation * Vector3.up;
-
-            Assert.That(frame.State, Is.EqualTo(MascotLocomotionState.Glide));
-            Assert.That(Mathf.Abs(frame.VisualOffset.x), Is.GreaterThan(0.001f));
-            Assert.That(Mathf.Abs(tiltedUp.x), Is.GreaterThan(0.001f));
+            Assert.That(clone, Is.Not.SameAs(source));
+            Assert.That(clone.FloatAmplitudeY, Is.EqualTo(source.FloatAmplitudeY));
+            Assert.That(clone.FloatFrequency1, Is.EqualTo(source.FloatFrequency1));
+            Assert.That(clone.FloatFrequency2, Is.EqualTo(source.FloatFrequency2));
+            Assert.That(clone.FloatFrequency3, Is.EqualTo(source.FloatFrequency3));
+            Assert.That(clone.FloatAmplitudeX, Is.EqualTo(source.FloatAmplitudeX));
+            Assert.That(clone.TiltAmplitudeDeg, Is.EqualTo(source.TiltAmplitudeDeg));
+            Assert.That(clone.TiltFrequency, Is.EqualTo(source.TiltFrequency));
         }
     }
 }

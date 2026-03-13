@@ -519,22 +519,13 @@ MonoBehaviour:
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::Yuukei.Runtime.ResidentAppController
   _glideLocomotionSettings:
-    GlideMaxSpeed: 220
-    Acceleration: 320
-    Deceleration: 420
-    SlowRadius: 180
-    ArrivalRadius: 28
-    StopSpeed: 16
-    HoverBobAmplitude: 0.18
-    HoverBobFrequency: 1.1
-    GlideSwayAmplitude: 0.12
-    GlideSwayFrequency: 0.75
-    TiltAmount: 9
-    VisualFollowSpeed: 8
-    HoverPauseMinSeconds: 1.1
-    HoverPauseMaxSeconds: 2.4
-    BusySpeedMultiplier: 0.35
-    BusyTravelMultiplier: 0.55
+    FloatAmplitudeY: 0.06
+    FloatFrequency1: 0.55
+    FloatFrequency2: 1.1
+    FloatFrequency3: 0.28
+    FloatAmplitudeX: 0.018
+    TiltAmplitudeDeg: 1.8
+    TiltFrequency: 0.4
   _dragMotionSettings:
     Clip: {fileID: 7400000, guid: a0f7332b8b1e05e45af6a998988848d2, type: 2}
     FadeInSeconds: 0.12

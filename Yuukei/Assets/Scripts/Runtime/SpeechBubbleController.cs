@@ -122,7 +122,7 @@ namespace Yuukei.Runtime
             ApplySprite(_tail, tailTexturePath);
         }
 
-        private void Update()
+        private void LateUpdate()
         {
             UpdatePosition();
         }
