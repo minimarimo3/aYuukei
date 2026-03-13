@@ -61,7 +61,7 @@ namespace Yuukei.Tests.EditMode
                 SetPrivateField(runtime, "_dragMotionBlendWeight", 0.72f);
 
                 var monitor = root.AddComponent<InputContextMonitor>();
-                monitor.Initialize(new TestDesktopAdapter(), null, runtime);
+                monitor.Initialize(new TestDesktopAdapter(), null, runtime, null);
                 SetPrivateField(monitor, "_dragging", true);
                 SetPrivateField(monitor, "_pointerDownOnMascot", true);
 

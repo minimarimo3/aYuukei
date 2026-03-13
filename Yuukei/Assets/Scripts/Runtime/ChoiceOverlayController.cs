@@ -15,11 +15,22 @@ namespace Yuukei.Runtime
     /// </summary>
     public sealed class ChoiceOverlayController : MonoBehaviour
     {
+        private const float CardWidth = 420f;
+        private const float CardPadding = 22f;
+        private const float CardSpacing = 14f;
+        private const float TitleHeight = 36f;
+        private const float ButtonHeight = 52f;
+        private const float ButtonSpacing = 10f;
+
         private Canvas _canvas;
         private RectTransform _panelRoot;
+        private RectTransform _cardRoot;
         private RectTransform _buttonContainer;
+        private LayoutElement _buttonContainerLayout;
         private UniTaskCompletionSource<string> _completionSource;
         private System.Threading.CancellationTokenRegistration _cancellationRegistration;
+
+        public bool IsShowing => _panelRoot != null && _panelRoot.gameObject.activeSelf;
 
         /// <summary>選択肢オーバーレイUIの初期化。パネル・カード・ボタンコンテナを構築する。</summary>
         public void Initialize(Canvas canvas)
@@ -46,17 +57,19 @@ namespace Yuukei.Runtime
 
             var cardObject = new GameObject("Card", typeof(RectTransform), typeof(Image), typeof(VerticalLayoutGroup));
             cardObject.transform.SetParent(panelObject.transform, false);
-            var cardRect = cardObject.GetComponent<RectTransform>();
-            cardRect.anchorMin = new Vector2(0.5f, 0.5f);
-            cardRect.anchorMax = new Vector2(0.5f, 0.5f);
-            cardRect.pivot = new Vector2(0.5f, 0.5f);
-            cardRect.sizeDelta = new Vector2(420f, 0f);
+            _cardRoot = cardObject.GetComponent<RectTransform>();
+            _cardRoot.anchorMin = new Vector2(0.5f, 0.5f);
+            _cardRoot.anchorMax = new Vector2(0.5f, 0.5f);
+            _cardRoot.pivot = new Vector2(0.5f, 0.5f);
+            _cardRoot.anchoredPosition = Vector2.zero;
+            _cardRoot.sizeDelta = new Vector2(CardWidth, 0f);
             var cardLayout = cardObject.GetComponent<VerticalLayoutGroup>();
-            cardLayout.spacing = 14f;
-            cardLayout.padding = new RectOffset(22, 22, 22, 22);
+            cardLayout.spacing = CardSpacing;
+            cardLayout.padding = new RectOffset((int)CardPadding, (int)CardPadding, (int)CardPadding, (int)CardPadding);
             cardLayout.childControlHeight = true;
             cardLayout.childControlWidth = true;
             cardLayout.childForceExpandHeight = false;
+            cardLayout.childForceExpandWidth = true;
             cardObject.GetComponent<Image>().color = new Color(0.12f, 0.15f, 0.22f, 0.95f);
 
             var titleObject = new GameObject("Title", typeof(RectTransform), typeof(Text));
@@ -68,21 +81,24 @@ namespace Yuukei.Runtime
             titleText.alignment = TextAnchor.MiddleCenter;
             titleText.color = Color.white;
             var titleLayout = titleObject.AddComponent<LayoutElement>();
-            titleLayout.preferredHeight = 36f;
+            titleLayout.preferredHeight = TitleHeight;
 
-            var buttonsObject = new GameObject("Buttons", typeof(RectTransform), typeof(VerticalLayoutGroup));
+            var buttonsObject = new GameObject("Buttons", typeof(RectTransform), typeof(VerticalLayoutGroup), typeof(LayoutElement));
             buttonsObject.transform.SetParent(cardObject.transform, false);
             _buttonContainer = buttonsObject.GetComponent<RectTransform>();
+            _buttonContainerLayout = buttonsObject.GetComponent<LayoutElement>();
+            _buttonContainerLayout.preferredHeight = 0f;
             var buttonsLayout = buttonsObject.GetComponent<VerticalLayoutGroup>();
-            buttonsLayout.spacing = 10f;
+            buttonsLayout.spacing = ButtonSpacing;
             buttonsLayout.childControlHeight = true;
             buttonsLayout.childControlWidth = true;
             buttonsLayout.childForceExpandHeight = false;
+            buttonsLayout.childForceExpandWidth = true;
 
             var closeButton = CreateButton("閉じる", font, () => Complete(string.Empty));
             closeButton.transform.SetParent(cardObject.transform, false);
 
-            panelObject.SetActive(false);
+            HideInternal();
             Debug.Log("[ChoiceOverlayController] 初期化完了");
         }
 
@@ -94,13 +110,15 @@ namespace Yuukei.Runtime
                 throw new InvalidOperationException("Choices must contain at least one entry.");
             }
 
+            if (_panelRoot == null || _cardRoot == null || _buttonContainer == null || _buttonContainerLayout == null)
+            {
+                throw new InvalidOperationException("ChoiceOverlayController must be initialized before showing choices.");
+            }
+
             CancelCurrent();
             _completionSource = new UniTaskCompletionSource<string>();
 
-            foreach (Transform child in _buttonContainer)
-            {
-                Destroy(child.gameObject);
-            }
+            ClearChoiceButtons();
 
             var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
             Button firstButton = null;
@@ -112,11 +130,17 @@ namespace Yuukei.Runtime
                 firstButton ??= button;
             }
 
-            _panelRoot.gameObject.SetActive(true);
-            EventSystem.current?.SetSelectedGameObject(firstButton != null ? firstButton.gameObject : null);
-
+            PrepareLayoutForDisplay(choices.Count);
             _cancellationRegistration.Dispose();
             _cancellationRegistration = cancellationToken.RegisterWithoutCaptureExecutionContext(CancelFromRuntimeCancellation);
+            _panelRoot.gameObject.SetActive(true);
+            _panelRoot.SetAsLastSibling();
+            Canvas.ForceUpdateCanvases();
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_buttonContainer);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_cardRoot);
+            LayoutRebuilder.ForceRebuildLayoutImmediate(_panelRoot);
+            Canvas.ForceUpdateCanvases();
+            EventSystem.current?.SetSelectedGameObject(firstButton != null ? firstButton.gameObject : null);
             Debug.Log($"[ChoiceOverlayController] 選択肢を表示 (件数: {choices.Count})");
             return _completionSource.Task;
         }
@@ -142,8 +166,7 @@ namespace Yuukei.Runtime
 
             _completionSource.TrySetCanceled();
             _completionSource = null;
-            _cancellationRegistration.Dispose();
-            _panelRoot.gameObject.SetActive(false);
+            HideInternal();
         }
 
         private void Update()
@@ -165,13 +188,74 @@ namespace Yuukei.Runtime
             Debug.Log($"[ChoiceOverlayController] 選択確定: \"{value}\"");
             _completionSource.TrySetResult(value ?? string.Empty);
             _completionSource = null;
+            HideInternal();
+        }
+
+        private void PrepareLayoutForDisplay(int choiceCount)
+        {
+            var buttonsHeight = choiceCount * ButtonHeight;
+            if (choiceCount > 1)
+            {
+                buttonsHeight += (choiceCount - 1) * ButtonSpacing;
+            }
+
+            var cardHeight = (CardPadding * 2f)
+                + TitleHeight
+                + buttonsHeight
+                + ButtonHeight
+                + (CardSpacing * 2f);
+
+            _cardRoot.localScale = Vector3.one;
+            _cardRoot.anchoredPosition = Vector2.zero;
+            _cardRoot.sizeDelta = new Vector2(CardWidth, cardHeight);
+            _buttonContainer.localScale = Vector3.one;
+            _buttonContainer.sizeDelta = Vector2.zero;
+            _buttonContainerLayout.preferredHeight = buttonsHeight;
+        }
+
+        private void ClearChoiceButtons()
+        {
+            for (var i = _buttonContainer.childCount - 1; i >= 0; i--)
+            {
+                var child = _buttonContainer.GetChild(i);
+                child.SetParent(null, false);
+                if (Application.isPlaying)
+                {
+                    Destroy(child.gameObject);
+                }
+                else
+                {
+                    DestroyImmediate(child.gameObject);
+                }
+            }
+        }
+
+        private void HideInternal()
+        {
             _cancellationRegistration.Dispose();
+            if (_panelRoot == null)
+            {
+                return;
+            }
+
+            var selected = EventSystem.current?.currentSelectedGameObject;
+            if (selected != null && selected.transform.IsChildOf(_panelRoot))
+            {
+                EventSystem.current.SetSelectedGameObject(null);
+            }
+
             _panelRoot.gameObject.SetActive(false);
         }
 
         private static void EnsureEventSystem()
         {
             if (EventSystem.current != null)
+            {
+                return;
+            }
+
+            var existingEventSystem = FindFirstObjectByType<EventSystem>();
+            if (existingEventSystem != null)
             {
                 return;
             }
@@ -189,9 +273,10 @@ namespace Yuukei.Runtime
             var buttonImage = buttonObject.GetComponent<Image>();
             buttonImage.color = new Color(0.18f, 0.25f, 0.39f, 1f);
             var layoutElement = buttonObject.GetComponent<LayoutElement>();
-            layoutElement.preferredHeight = 52f;
+            layoutElement.preferredHeight = ButtonHeight;
 
             var button = buttonObject.GetComponent<Button>();
+            button.interactable = true;
             button.onClick.AddListener(() => onClick?.Invoke());
 
             var labelObject = new GameObject("Label", typeof(RectTransform), typeof(Text));
@@ -208,6 +293,7 @@ namespace Yuukei.Runtime
             text.alignment = TextAnchor.MiddleCenter;
             text.color = Color.white;
             text.text = label;
+            text.raycastTarget = false;
 
             return button;
         }

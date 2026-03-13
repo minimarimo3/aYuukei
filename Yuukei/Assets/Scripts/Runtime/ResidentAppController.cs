@@ -164,7 +164,7 @@ namespace Yuukei.Runtime
             _variableStore = new YuukeiVariableStore(_persistenceStore);
 
             _daihonBridge = new DaihonBridge(_aliasRegistry, _variableStore, _speechBubbleController, _choiceOverlayController, _mascotRuntime);
-            _inputContextMonitor.Initialize(_desktopAdapter, _windowController, _mascotRuntime);
+            _inputContextMonitor.Initialize(_desktopAdapter, _windowController, _mascotRuntime, _choiceOverlayController);
             _inputContextMonitor.EventRaised += OnRuntimeEventRaised;
             _desktopAdapter.ApplyShortcuts(_persistenceStore.Data.AppState.ShortcutConfig);
             _desktopAdapter.UpdateShellState(BuildShellState());

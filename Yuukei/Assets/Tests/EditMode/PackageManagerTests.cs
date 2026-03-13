@@ -8,6 +8,7 @@ using System.Threading.Tasks;
 using Cysharp.Threading.Tasks;
 using NUnit.Framework;
 using UnityEngine;
+using UnityEngine.EventSystems;
 using UnityEngine.UI;
 using Yuukei.Runtime;
 
@@ -28,6 +29,21 @@ $@"{{
 {escapedPaths}
   ]
 }}";
+        }
+    }
+
+    internal static class ChoiceOverlayTestUtility
+    {
+        public static T GetPrivateField<T>(object instance, string fieldName) where T : class
+        {
+            var field = instance.GetType().GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            return field?.GetValue(instance) as T;
+        }
+
+        public static bool IsChoiceOverlayVisible(ChoiceOverlayController controller)
+        {
+            var panel = GetPrivateField<RectTransform>(controller, "_panelRoot");
+            return panel != null && panel.gameObject.activeSelf;
         }
     }
 
@@ -215,6 +231,83 @@ $@"{{
 
     }
 
+    public sealed class ChoiceOverlayControllerTests
+    {
+        [Test]
+        public void ShowChoicesAsync_BuildsVisibleButtonsAndReturnsSelection()
+        {
+            var root = new GameObject("ChoiceOverlayControllerTests");
+            var initialEventSystems = UnityEngine.Object.FindObjectsByType<EventSystem>(FindObjectsSortMode.None);
+
+            try
+            {
+                var canvasObject = new GameObject("Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+                canvasObject.transform.SetParent(root.transform, false);
+                var canvas = canvasObject.GetComponent<Canvas>();
+                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+
+                var controller = root.AddComponent<ChoiceOverlayController>();
+                controller.Initialize(canvas);
+
+                var task = controller.ShowChoicesAsync(new[] { "A", "B" }, CancellationToken.None).AsTask();
+                var panel = ChoiceOverlayTestUtility.GetPrivateField<RectTransform>(controller, "_panelRoot");
+                var card = ChoiceOverlayTestUtility.GetPrivateField<RectTransform>(controller, "_cardRoot");
+                var buttons = ChoiceOverlayTestUtility.GetPrivateField<RectTransform>(controller, "_buttonContainer");
+
+                Assert.That(panel, Is.Not.Null);
+                Assert.That(card, Is.Not.Null);
+                Assert.That(buttons, Is.Not.Null);
+
+                Canvas.ForceUpdateCanvases();
+                LayoutRebuilder.ForceRebuildLayoutImmediate(buttons);
+                LayoutRebuilder.ForceRebuildLayoutImmediate(card);
+                LayoutRebuilder.ForceRebuildLayoutImmediate(panel);
+                Canvas.ForceUpdateCanvases();
+
+                Assert.That(controller.IsShowing, Is.True);
+                Assert.That(panel.gameObject.activeSelf, Is.True);
+                Assert.That(buttons.childCount, Is.EqualTo(2));
+                Assert.That(card.rect.height, Is.GreaterThan(0f));
+                Assert.That(buttons.rect.height, Is.GreaterThan(0f));
+
+                Button firstButton = null;
+                foreach (Transform child in buttons)
+                {
+                    var rect = child as RectTransform;
+                    var button = child.GetComponent<Button>();
+                    Assert.That(rect, Is.Not.Null);
+                    Assert.That(button, Is.Not.Null);
+                    Assert.That(button.interactable, Is.True);
+                    Assert.That(rect.rect.height, Is.GreaterThan(0f));
+                    Assert.That(rect.localScale, Is.EqualTo(Vector3.one));
+                    Assert.That(button.image.color.a, Is.GreaterThan(0f));
+                    firstButton ??= button;
+                }
+
+                Assert.That(firstButton, Is.Not.Null);
+                Assert.That(UnityEngine.Object.FindFirstObjectByType<EventSystem>(), Is.Not.Null);
+
+                firstButton.onClick.Invoke();
+
+                Assert.That(task.GetAwaiter().GetResult(), Is.EqualTo("A"));
+                Assert.That(controller.IsShowing, Is.False);
+            }
+            finally
+            {
+                foreach (var eventSystem in UnityEngine.Object.FindObjectsByType<EventSystem>(FindObjectsSortMode.None))
+                {
+                    var existedBeforeTest = Array.Exists(initialEventSystems, existing => existing == eventSystem);
+                    if (!existedBeforeTest)
+                    {
+                        UnityEngine.Object.DestroyImmediate(eventSystem.gameObject);
+                    }
+                }
+
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+    }
+
     public sealed class StarterPackageSeederTests
     {
         [Test]
@@ -344,6 +437,90 @@ $@"{{
     public sealed class DaihonBridgeTests
     {
         [Test]
+        public async Task RaiseEventAsync_CharacterDoubleClick_ShowsChoicesAndReturnsSelectedLabel()
+        {
+            var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-double-click-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(tempDirectory);
+            var scriptPath = Path.Combine(tempDirectory, "interaction.daihon");
+            File.WriteAllText(scriptPath,
+@"## Interactions
+### DoubleClick
+合図: ＠ダブルクリック
+_answer=＜show_choices 「よろしく」 「あとで」＞
+＜show_dialog _answer＞");
+
+            var root = new GameObject("DaihonBridgeDoubleClickTests");
+
+            try
+            {
+                var persistenceStore = new PersistenceStore(Path.Combine(tempDirectory, "save.json"));
+                var aliasRegistry = new AliasRegistry();
+                var variableStore = new YuukeiVariableStore(persistenceStore);
+                var canvasObject = new GameObject("Canvas", typeof(Canvas), typeof(CanvasScaler), typeof(GraphicRaycaster));
+                canvasObject.transform.SetParent(root.transform, false);
+                var canvas = canvasObject.GetComponent<Canvas>();
+                canvas.renderMode = RenderMode.ScreenSpaceOverlay;
+                var cameraObject = new GameObject("Camera", typeof(Camera));
+                cameraObject.transform.SetParent(root.transform, false);
+                var camera = cameraObject.GetComponent<Camera>();
+                var speechBubbleController = root.AddComponent<SpeechBubbleController>();
+                var choiceOverlayController = root.AddComponent<ChoiceOverlayController>();
+                var mascotRuntime = root.AddComponent<MascotRuntime>();
+                var bridge = new DaihonBridge(aliasRegistry, variableStore, speechBubbleController, choiceOverlayController, mascotRuntime);
+                speechBubbleController.Initialize(canvas, camera, () => Vector3.zero);
+                choiceOverlayController.Initialize(canvas);
+                await bridge.ApplyActivePackageAsync(
+                    new PackageContentSelection
+                    {
+                        DaihonPaths = new List<string> { scriptPath },
+                    },
+                    new PackageAliasManifest(),
+                    CancellationToken.None);
+
+                var task = bridge.RaiseEventAsync(
+                    "character_double_clicked",
+                    new Dictionary<string, object>
+                    {
+                        ["_event_x"] = 120f,
+                        ["_event_y"] = 240f,
+                        ["_event_character_id"] = "mascot-01",
+                    },
+                    CancellationToken.None).AsTask();
+
+                Assert.That(SpinWait.SpinUntil(() => ChoiceOverlayTestUtility.IsChoiceOverlayVisible(choiceOverlayController), TimeSpan.FromSeconds(1)), Is.True);
+
+                var card = ChoiceOverlayTestUtility.GetPrivateField<RectTransform>(choiceOverlayController, "_cardRoot");
+                var buttons = ChoiceOverlayTestUtility.GetPrivateField<RectTransform>(choiceOverlayController, "_buttonContainer");
+                Assert.That(card, Is.Not.Null);
+                Assert.That(buttons, Is.Not.Null);
+                Canvas.ForceUpdateCanvases();
+                LayoutRebuilder.ForceRebuildLayoutImmediate(buttons);
+                LayoutRebuilder.ForceRebuildLayoutImmediate(card);
+                Canvas.ForceUpdateCanvases();
+
+                Assert.That(choiceOverlayController.IsShowing, Is.True);
+                Assert.That(card.rect.height, Is.GreaterThan(0f));
+                Assert.That(buttons.rect.height, Is.GreaterThan(0f));
+                Assert.That(buttons.childCount, Is.EqualTo(2));
+
+                var firstButton = buttons.GetChild(0).GetComponent<Button>();
+                Assert.That(firstButton, Is.Not.Null);
+                Assert.That(firstButton.interactable, Is.True);
+
+                firstButton.onClick.Invoke();
+                await task;
+
+                Assert.That(choiceOverlayController.IsShowing, Is.False);
+                Assert.That(GetSpeechText(speechBubbleController), Is.EqualTo("よろしく"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(root);
+                Directory.Delete(tempDirectory, true);
+            }
+        }
+
+        [Test]
         public async Task RaiseEventAsync_DispatchesScriptsInOrder_AndResetsTransientStateBetweenScripts()
         {
             var tempDirectory = Path.Combine(Path.GetTempPath(), "yuukei-daihon-" + Guid.NewGuid().ToString("N"));
@@ -365,7 +542,8 @@ _temp=「from defaults」
 
 ### Scene
 合図: ＠app_started
-＜show_dialog _event_character_id + 「|」 + _temp＞");
+_message=_event_character_id + 「|」 + _temp
+＜show_dialog _message＞");
 
             var root = new GameObject("DaihonBridgeTests");
 
@@ -420,16 +598,15 @@ _temp=「from defaults」
 
         private static bool IsChoiceOverlayVisible(ChoiceOverlayController controller)
         {
-            var panelField = typeof(ChoiceOverlayController).GetField("_panelRoot", BindingFlags.Instance | BindingFlags.NonPublic);
-            var panel = panelField?.GetValue(controller) as RectTransform;
-            return panel != null && panel.gameObject.activeSelf;
+            return ChoiceOverlayTestUtility.IsChoiceOverlayVisible(controller);
         }
 
         private static string GetSpeechText(SpeechBubbleController controller)
         {
             var labelField = typeof(SpeechBubbleController).GetField("_label", BindingFlags.Instance | BindingFlags.NonPublic);
-            var label = labelField?.GetValue(controller) as Text;
-            return label?.text ?? string.Empty;
+            var label = labelField?.GetValue(controller);
+            var textProperty = label?.GetType().GetProperty("text", BindingFlags.Instance | BindingFlags.Public);
+            return textProperty?.GetValue(label) as string ?? string.Empty;
         }
     }
 }

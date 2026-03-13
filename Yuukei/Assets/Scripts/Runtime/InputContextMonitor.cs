@@ -25,6 +25,7 @@ namespace Yuukei.Runtime
         private IDesktopPlatformAdapter _desktopAdapter;
         private UniWindowController _windowController;
         private MascotRuntime _mascotRuntime;
+        private ChoiceOverlayController _choiceOverlayController;
         private bool _enabled = true;
         private bool _pointerDownOnMascot;
         private bool _dragging;
@@ -41,11 +42,12 @@ namespace Yuukei.Runtime
         public float BusyScore { get; private set; }
 
         /// <summary>デスクトップアダプタとウィンドウコントローラを受け取り、入力監視を初期化する。</summary>
-        public void Initialize(IDesktopPlatformAdapter desktopAdapter, UniWindowController windowController, MascotRuntime mascotRuntime)
+        public void Initialize(IDesktopPlatformAdapter desktopAdapter, UniWindowController windowController, MascotRuntime mascotRuntime, ChoiceOverlayController choiceOverlayController)
         {
             _desktopAdapter = desktopAdapter;
             _windowController = windowController;
             _mascotRuntime = mascotRuntime;
+            _choiceOverlayController = choiceOverlayController;
             _sessionStartedAt = Time.realtimeSinceStartup;
 
             _allowedDisplayIndices.Clear();
@@ -107,7 +109,15 @@ namespace Yuukei.Runtime
                 return;
             }
 
-            HandlePointer();
+            if (_choiceOverlayController != null && _choiceOverlayController.IsShowing)
+            {
+                CancelPointerState(clearDragMotion: true);
+            }
+            else
+            {
+                HandlePointer();
+            }
+
             EmitIdleIfNeeded(idleSeconds);
             EmitPeriodicTickIfNeeded();
         }
