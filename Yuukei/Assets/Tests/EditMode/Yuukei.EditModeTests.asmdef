@@ -4,7 +4,16 @@
   "references": [
     "Yuukei.Runtime",
     "UniTask",
-    "Kirurobo.UniWindowController"
+    "Kirurobo.UniWindowController",
+    "FastSpringBone10",
+    "SpringBoneJobs",
+    "UniGLTF",
+    "UniGLTF.UniUnlit",
+    "UniGLTF.Utils",
+    "UniHumanoid",
+    "VRM10",
+    "VRM10.MToon10",
+    "VrmLib"
   ],
   "includePlatforms": [
     "Editor"

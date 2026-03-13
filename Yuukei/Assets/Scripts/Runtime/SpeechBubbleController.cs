@@ -1,6 +1,7 @@
 using System;
 using System.IO;
 using Cysharp.Threading.Tasks;
+using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -18,7 +19,7 @@ namespace Yuukei.Runtime
         private RectTransform _root;
         private Image _background;
         private Image _tail;
-        private Text _label;
+        private TextMeshProUGUI _label;
         private int _displayVersion;
 
         /// <summary>吹き出しUIの初期化。Canvas上にルート・ラベル・テールを構築する。</summary>
@@ -34,8 +35,6 @@ namespace Yuukei.Runtime
                 return;
             }
 
-            var font = Resources.GetBuiltinResource<Font>("LegacyRuntime.ttf");
-
             var rootObject = new GameObject("SpeechBubble", typeof(RectTransform), typeof(Image));
             rootObject.transform.SetParent(_canvas.transform, false);
             _root = rootObject.GetComponent<RectTransform>();
@@ -46,19 +45,18 @@ namespace Yuukei.Runtime
             _root.anchorMax = new Vector2(0f, 0f);
             _root.sizeDelta = new Vector2(340f, 120f);
 
-            var labelObject = new GameObject("Label", typeof(RectTransform), typeof(Text));
+            var labelObject = new GameObject("Label", typeof(RectTransform), typeof(TextMeshProUGUI));
             labelObject.transform.SetParent(rootObject.transform, false);
             var labelRect = labelObject.GetComponent<RectTransform>();
             labelRect.anchorMin = Vector2.zero;
             labelRect.anchorMax = Vector2.one;
             labelRect.offsetMin = new Vector2(18f, 18f);
             labelRect.offsetMax = new Vector2(-18f, -18f);
-            _label = labelObject.GetComponent<Text>();
-            _label.font = font;
+            _label = labelObject.GetComponent<TextMeshProUGUI>();
             _label.fontSize = 22;
-            _label.alignment = TextAnchor.MiddleCenter;
-            _label.horizontalOverflow = HorizontalWrapMode.Wrap;
-            _label.verticalOverflow = VerticalWrapMode.Overflow;
+            _label.alignment = TextAlignmentOptions.Center;
+            _label.enableWordWrapping = true;
+            _label.overflowMode = TextOverflowModes.Overflow;
             _label.color = Color.white;
 
             var tailObject = new GameObject("Tail", typeof(RectTransform), typeof(Image));

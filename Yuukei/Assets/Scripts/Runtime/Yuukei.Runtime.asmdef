@@ -7,7 +7,14 @@
     "UniGLTF",
     "Kirurobo.UniWindowController",
     "Unity.InputSystem",
-    "Unity.Timeline"
+    "Unity.Timeline",
+    "FastSpringBone10",
+    "SpringBoneJobs",
+    "UniGLTF.UniUnlit",
+    "UniGLTF.Utils",
+    "UniHumanoid",
+    "VRM10.MToon10",
+    "VrmLib"
   ],
   "includePlatforms": [],
   "excludePlatforms": [],
