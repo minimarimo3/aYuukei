@@ -95,6 +95,18 @@ namespace Yuukei.Runtime
             public Vector3 LocalScale { get; }
         }
 
+        private readonly struct TransformLocalPositionSnapshot
+        {
+            public TransformLocalPositionSnapshot(Transform transform, Vector3 localPosition)
+            {
+                Transform = transform;
+                LocalPosition = localPosition;
+            }
+
+            public Transform Transform { get; }
+            public Vector3 LocalPosition { get; }
+        }
+
         private Camera _worldCamera;
         private Transform _root;
         private Transform _visualRoot;
@@ -107,6 +119,7 @@ namespace Yuukei.Runtime
         private readonly Dictionary<string, LoadedMotion> _loadedMotions = new Dictionary<string, LoadedMotion>(StringComparer.Ordinal);
         private readonly Dictionary<string, ExpressionKey> _expressionKeys = new Dictionary<string, ExpressionKey>(StringComparer.Ordinal);
         private readonly Dictionary<HumanBodyBones, ControlRigPoseSnapshot> _controlRigRestPose = new Dictionary<HumanBodyBones, ControlRigPoseSnapshot>();
+        private readonly List<TransformLocalPositionSnapshot> _dragTranslationSnapshots = new List<TransformLocalPositionSnapshot>();
 
         private Vrm10Instance _vrmInstance;
         private RectInt _virtualDesktopBounds;
@@ -697,12 +710,16 @@ namespace Yuukei.Runtime
             if (ShouldDriveDragMotion())
             {
                 runtime.VrmAnimation = null;
+                var controlRig = runtime.ControlRig;
                 if (!ApplyBaseMotionPoseToControlRig())
                 {
                     ApplyCachedControlRigPose();
                 }
 
+                // Keep the drag pose's rotations while preventing translation curves from shifting the pickup anchor.
+                CaptureCurrentDragTranslationState(controlRig);
                 EvaluateDragMotionPlayable(deltaTime);
+                RestoreCapturedDragTranslationState();
                 ApplyExpressionOverride(useActiveMotionSource: false);
                 runtime.Process();
                 return;
@@ -895,6 +912,55 @@ namespace Yuukei.Runtime
             }
         }
 
+        private void CaptureCurrentDragTranslationState(Vrm10RuntimeControlRig controlRig)
+        {
+            _dragTranslationSnapshots.Clear();
+            if (controlRig == null)
+            {
+                return;
+            }
+
+            CaptureDragTranslationSnapshot(controlRig.ControlRigAnimator != null ? controlRig.ControlRigAnimator.transform : null);
+            foreach (var (_, controlBone) in controlRig.Bones)
+            {
+                CaptureDragTranslationSnapshot(controlBone.ControlBone);
+            }
+        }
+
+        private void CaptureDragTranslationSnapshot(Transform transform)
+        {
+            if (transform == null)
+            {
+                return;
+            }
+
+            for (var i = 0; i < _dragTranslationSnapshots.Count; i++)
+            {
+                if (_dragTranslationSnapshots[i].Transform == transform)
+                {
+                    return;
+                }
+            }
+
+            _dragTranslationSnapshots.Add(new TransformLocalPositionSnapshot(transform, transform.localPosition));
+        }
+
+        private void RestoreCapturedDragTranslationState()
+        {
+            for (var i = 0; i < _dragTranslationSnapshots.Count; i++)
+            {
+                var snapshot = _dragTranslationSnapshots[i];
+                if (snapshot.Transform == null)
+                {
+                    continue;
+                }
+
+                snapshot.Transform.localPosition = snapshot.LocalPosition;
+            }
+
+            _dragTranslationSnapshots.Clear();
+        }
+
         private void EvaluateDragMotionPlayable(float deltaTime)
         {
             if (!CanUseDragMotion())
@@ -925,12 +991,14 @@ namespace Yuukei.Runtime
             CancelUserDragMotionImmediately();
             DestroyDragMotionPlayableGraph();
             _controlRigRestPose.Clear();
+            _dragTranslationSnapshots.Clear();
         }
 
         private void RebuildDragMotionPlayableGraph()
         {
             DestroyDragMotionPlayableGraph();
             _controlRigRestPose.Clear();
+            _dragTranslationSnapshots.Clear();
 
             if (_vrmInstance == null)
             {
