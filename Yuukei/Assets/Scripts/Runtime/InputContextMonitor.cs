@@ -20,8 +20,12 @@ namespace Yuukei.Runtime
         private const float DragThresholdPixels = 14f;
         private const float IdleThresholdSeconds = 45f;
         private const float PeriodicTickSeconds = 30f;
+        private const float StrokeInputSuppressionSeconds = 0.18f;
+        private const string HeadBodyPart = "head";
+        private const string OtherBodyPart = "other";
 
         private readonly HashSet<int> _allowedDisplayIndices = new HashSet<int>();
+        private readonly StrokeGestureRecognizer _strokeGestureRecognizer = new StrokeGestureRecognizer();
         private IDesktopPlatformAdapter _desktopAdapter;
         private UniWindowController _windowController;
         private MascotRuntime _mascotRuntime;
@@ -30,6 +34,7 @@ namespace Yuukei.Runtime
         private bool _pointerDownOnMascot;
         private bool _dragging;
         private Vector2 _pointerDownPosition;
+        private string _pointerDownBodyPart = OtherBodyPart;
         private float _lastClickReleasedAt = -10f;
         private float _lastIdleEmitAt = -10f;
         private float _lastPeriodicTickAt = -10f;
@@ -127,12 +132,15 @@ namespace Yuukei.Runtime
         {
             var mouse = Mouse.current;
             var position = mouse.position.ReadValue();
+            var now = Time.realtimeSinceStartup;
 
             if (mouse.leftButton.wasPressedThisFrame)
             {
                 _pointerDownPosition = position;
                 _pointerDownOnMascot = _mascotRuntime.HitTestScreenPoint(position);
+                _pointerDownBodyPart = ResolvePointerDownBodyPart(position, _pointerDownOnMascot);
                 _dragging = false;
+                SuppressStrokeRecognition(now);
             }
 
             if (_pointerDownOnMascot && mouse.leftButton.isPressed && !_dragging)
@@ -142,6 +150,7 @@ namespace Yuukei.Runtime
                 {
                     _dragging = true;
                     _mascotRuntime.SetUserDragMotionActive(true);
+                    SuppressStrokeRecognition(now);
                     EmitPointerEvent("character_drag_started", position);
                 }
             }
@@ -165,7 +174,13 @@ namespace Yuukei.Runtime
                     HandleClickRelease(position);
                 }
 
-                CancelPointerState(clearDragMotion: false);
+                SuppressStrokeRecognition(now);
+                CancelPointerState(clearDragMotion: false, clearPendingClick: false);
+            }
+
+            if (!_dragging && !mouse.leftButton.isPressed)
+            {
+                TryRecognizeStroke(position, now);
             }
         }
 
@@ -182,17 +197,17 @@ namespace Yuukei.Runtime
             }
 
             _lastClickReleasedAt = now;
-            ScheduleSingleClickAsync(position).Forget();
+            ScheduleSingleClickAsync(position, _pointerDownBodyPart).Forget();
         }
 
-        private async UniTaskVoid ScheduleSingleClickAsync(Vector2 position)
+        private async UniTaskVoid ScheduleSingleClickAsync(Vector2 position, string bodyPart)
         {
             CancelPendingClick();
             _singleClickDelay = new CancellationTokenSource();
             try
             {
                 await UniTask.Delay(TimeSpan.FromSeconds(DoubleClickWindowSeconds), cancellationToken: _singleClickDelay.Token);
-                EmitPointerEvent("character_clicked", position);
+                EmitPointerEvent("character_clicked", position, bodyPart);
             }
             catch (OperationCanceledException)
             {
@@ -235,14 +250,61 @@ namespace Yuukei.Runtime
             });
         }
 
-        private void EmitPointerEvent(string canonicalName, Vector2 position)
+        private void EmitPointerEvent(string canonicalName, Vector2 position, string bodyPart = null)
         {
-            Emit(canonicalName, new Dictionary<string, object>
+            var context = new Dictionary<string, object>
             {
                 ["_event_x"] = position.x,
                 ["_event_y"] = position.y,
                 ["_event_character_id"] = _mascotRuntime.CharacterId,
+            };
+
+            if (!string.IsNullOrWhiteSpace(bodyPart))
+            {
+                context["_event_body_part"] = bodyPart;
+            }
+
+            Emit(canonicalName, context);
+        }
+
+        private void TryRecognizeStroke(Vector2 position, float now)
+        {
+            var isHead = _mascotRuntime != null
+                && _mascotRuntime.TryGetBodyPartAtScreenPoint(position, out var bodyPart)
+                && string.Equals(bodyPart, HeadBodyPart, StringComparison.Ordinal);
+
+            if (!_strokeGestureRecognizer.TrySample(position, now, isHead, out var detection))
+            {
+                return;
+            }
+
+            Emit("character_stroked", new Dictionary<string, object>
+            {
+                ["_event_body_part"] = HeadBodyPart,
+                ["_event_x"] = detection.Position.x,
+                ["_event_y"] = detection.Position.y,
+                ["_event_character_id"] = _mascotRuntime.CharacterId,
+                ["_event_stroke_count"] = detection.StrokeCount,
+                ["_event_stroke_speed"] = detection.StrokeSpeed,
+                ["_event_stroke_direction"] = detection.StrokeDirection,
             });
+        }
+
+        private string ResolvePointerDownBodyPart(Vector2 position, bool pointerDownOnMascot)
+        {
+            if (!pointerDownOnMascot || _mascotRuntime == null)
+            {
+                return OtherBodyPart;
+            }
+
+            return _mascotRuntime.TryGetBodyPartAtScreenPoint(position, out var bodyPart)
+                ? bodyPart
+                : OtherBodyPart;
+        }
+
+        private void SuppressStrokeRecognition(float now)
+        {
+            _strokeGestureRecognizer.SuppressUntil(now + StrokeInputSuppressionSeconds);
         }
 
         /// <summary>ファイルがウィンドウにドロップされたときの処理。</summary>
@@ -291,16 +353,23 @@ namespace Yuukei.Runtime
             _singleClickDelay = null;
         }
 
-        private void CancelPointerState(bool clearDragMotion)
+        private void CancelPointerState(bool clearDragMotion, bool clearPendingClick = true)
         {
-            CancelPendingClick();
+            if (clearPendingClick)
+            {
+                CancelPendingClick();
+                _lastClickReleasedAt = -10f;
+            }
+
             if (clearDragMotion && _dragging)
             {
                 _mascotRuntime?.CancelUserDragMotionImmediately();
             }
 
+            _strokeGestureRecognizer.Reset();
             _pointerDownOnMascot = false;
             _dragging = false;
+            _pointerDownBodyPart = OtherBodyPart;
         }
 
         private void OnDestroy()

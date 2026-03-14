@@ -14,6 +14,9 @@ namespace Yuukei.Tests.EditMode
             Assert.That(registry.TryResolveEventName("クリック", out var eventName), Is.True);
             Assert.That(eventName, Is.EqualTo("character_clicked"));
 
+            Assert.That(registry.TryResolveEventName("なでなで", out var strokeEventName), Is.True);
+            Assert.That(strokeEventName, Is.EqualTo("character_stroked"));
+
             Assert.That(registry.TryResolveFunctionName("吹き出し表示", out var functionName), Is.True);
             Assert.That(functionName, Is.EqualTo("show_dialog"));
         }

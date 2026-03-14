@@ -21,7 +21,7 @@
 - `ResidentAppController.ApplyCurrentPackageAsync()` が VRM、モーション、吹き出しテクスチャ、DLL 候補、Daihon スクリプト群を一括適用する。
 - 初回起動なら簡易スプラッシュを Canvas 上に出した後、`app_started` を `DaihonBridge` に流す。
 - 常時更新の入口は `ResidentAppController.Update()` で、毎フレーム `WindowsDesktopAdapter.Tick()`、`InputContextMonitor.Tick()`、`MascotRuntime.SetDesktopContext()`、`MascotRuntime.Tick()` が呼ばれる。
-- 入力は Unity の UI イベントではなく、`InputContextMonitor` が `Mouse.current` を直接ポーリングし、クリック / ダブルクリック / ドラッグ / アイドル / periodic_tick / ファイルドロップを canonical event として発火する。
+- 入力は Unity の UI イベントではなく、`InputContextMonitor` が `Mouse.current` を直接ポーリングし、クリック / 頭なでなで / ダブルクリック / ドラッグ / アイドル / periodic_tick / ファイルドロップを canonical event として発火する。
 - イベントは `ResidentAppController.OnRuntimeEventRaised()` 経由で `DaihonBridge.RaiseEventAsync()` に積まれ、FIFO キューで順次処理される。`periodic_tick` だけは coalesce される。
 - Daihon 実行時は `YuukeiVariableStore` に `_event_*` コンテキストが注入され、`DaihonScriptRuntime` が各 `.daihon` を順に実行する。
 - セリフ本文は `SpeechBubbleController.ShowDialogueAsync()`、`show_dialog(...)` は `SpeechBubbleController.ShowImmediate()`、`show_choices(...)` は `ChoiceOverlayController.ShowChoicesAsync()`、表情・モーション・小物は `MascotRuntime` に流れる。
@@ -48,8 +48,8 @@
 | `DaihonBridge` | `Yuukei/Assets/Scripts/Runtime/DaihonBridge.cs` | Daihon スクリプト読み込み、イベント alias 解決、キュー処理、キャンセル、関数ディスパッチ接続 | `ApplyActivePackageAsync()`, `RaiseEventAsync()`, `SetTemporarilyDisabled()`, `CancelAndClear()`, `RegisterFunction()` | `AliasRegistry`, `YuukeiVariableStore`, `SpeechBubbleController`, `ChoiceOverlayController`, `MascotRuntime`, `DaihonScriptRuntime`, `DaihonFunctionDispatcher` | 自前の async キュー (`ProcessQueueAsync`) を持つ。MonoBehaviour ではない |
 | `DaihonFunctionDispatcher` | `Yuukei/Assets/Scripts/Runtime/DaihonFunctionDispatcher.cs` | `show_dialog`, `set_expression`, `play_motion`, `set_prop_visible`, `show_choices`, `set_persistent` の実装 | `RegisterFunction()`, `InvokeAsync()` | `AliasRegistry`, `SpeechBubbleController`, `ChoiceOverlayController`, `MascotRuntime`, `YuukeiVariableStore` | Unity ライフサイクルなし。`DaihonBridge` から呼ばれる |
 | `DaihonScriptRuntime` | `Yuukei/Assets/Scripts/Runtime/DaihonScriptRuntime.cs` | `.daihon` を parse し、シーン選択・条件評価・ジャンプ処理を行う | `Parse()`, `RunEventAsync()`, `EvaluateConditionAsync()` | `DaihonLexer`, `DaihonParser`, `DaihonScriptVisitor` | Unity ライフサイクルなし。`DaihonBridge` から呼ばれる |
-| `InputContextMonitor` | `Yuukei/Assets/Scripts/Runtime/InputContextMonitor.cs` | マウス入力、ドラッグ、アイドル、periodic_tick、ファイルドロップ、許可ディスプレイ計算 | `Initialize()`, `SetInputEnabled()`, `Tick()`, `RecalculateAllowedDisplays()`, `BusyScore` | `IDesktopPlatformAdapter`, `UniWindowController`, `MascotRuntime`, `FileKindClassifier`, `Mouse.current` | `ResidentAppController.Update()` から毎フレーム呼ばれる。`OnDestroy()` で OnDropFiles を解除 |
-| `MascotRuntime` | `Yuukei/Assets/Scripts/Runtime/MascotRuntime.cs` | マスコットの VRM / プレースホルダ表示、モーション、表情、ドラッグ、表示可否、画面座標変換 | `Initialize()`, `SetDesktopContext()`, `LoadCharacterAsync()`, `LoadMotionsAsync()`, `SetExpression()`, `PlayMotion()`, `SetPropVisible()`, `SetVisible()`, `MoveByScreenDelta()`, `HitTestScreenPoint()`, `Tick()` | `Camera`, `UniVRM10`, `UniGLTF`, `PlayableGraph`, `GlideLocomotionSettings`, `DragMotionSettings` | `ResidentAppController.Update()` から `Tick()`, 自身の `LateUpdate()`, `OnDestroy()` |
+| `InputContextMonitor` | `Yuukei/Assets/Scripts/Runtime/InputContextMonitor.cs` | マウス入力、頭なでなで gesture、ドラッグ、アイドル、periodic_tick、ファイルドロップ、許可ディスプレイ計算 | `Initialize()`, `SetInputEnabled()`, `Tick()`, `RecalculateAllowedDisplays()`, `BusyScore` | `IDesktopPlatformAdapter`, `UniWindowController`, `MascotRuntime`, `StrokeGestureRecognizer`, `FileKindClassifier`, `Mouse.current` | `ResidentAppController.Update()` から毎フレーム呼ばれる。`OnDestroy()` で OnDropFiles を解除 |
+| `MascotRuntime` | `Yuukei/Assets/Scripts/Runtime/MascotRuntime.cs` | マスコットの VRM / プレースホルダ表示、モーション、表情、ドラッグ、表示可否、画面座標変換、screen-space 部位近似判定 | `Initialize()`, `SetDesktopContext()`, `LoadCharacterAsync()`, `LoadMotionsAsync()`, `SetExpression()`, `PlayMotion()`, `SetPropVisible()`, `SetVisible()`, `MoveByScreenDelta()`, `HitTestScreenPoint()`, `TryGetBodyPartAtScreenPoint()`, `Tick()` | `Camera`, `UniVRM10`, `UniGLTF`, `PlayableGraph`, `GlideLocomotionSettings`, `DragMotionSettings` | `ResidentAppController.Update()` から `Tick()`, 自身の `LateUpdate()`, `OnDestroy()` |
 | `SpeechBubbleController` | `Yuukei/Assets/Scripts/Runtime/SpeechBubbleController.cs` | 吹き出し UI の生成、即時表示、待機付き表示、位置追従、テーマ差し替え | `Initialize()`, `ShowDialogueAsync()`, `ShowImmediate()`, `Hide()`, `ApplyTheme()` | `Canvas`, `Camera`, `TextMeshProUGUI`, `Image` | 自身の `LateUpdate()` と async auto-hide |
 | `ChoiceOverlayController` | `Yuukei/Assets/Scripts/Runtime/ChoiceOverlayController.cs` | `show_choices(...)` 用のボタンオーバーレイ | `Initialize()`, `ShowChoicesAsync()`, `CancelCurrent()`, `CancelFromRuntimeCancellation()` | `Canvas`, `EventSystem`, `InputSystemUIInputModule`, `Button` | 自身の `Update()` で Esc 監視 |
 | `SettingsWindow` | `Yuukei/Assets/Scripts/Runtime/SettingsWindow.cs` | サイドバー式設定 UI をランタイム生成する | `Initialize()`, `SetVisible()`, `Refresh()` | `UIDocument`, `PanelSettings`, `PersistenceStore`, `PackageManager`, `PluginLoader` | MonoBehaviour だが `Update()` は持たない。UI Toolkit を runtime 構築 |
@@ -135,7 +135,7 @@ call chain:
 
 そこから派生する更新:
 
-- `InputContextMonitor.Tick()` 内でクリック / ダブルクリック / ドラッグ / アイドル / periodic_tick 判定
+- `InputContextMonitor.Tick()` 内でクリック / 頭なでなで / ダブルクリック / ドラッグ / アイドル / periodic_tick 判定
 - `MascotRuntime.Tick()` 内で表示可否判定、禁止ディスプレイ退避、ドラッグ継続
 - `MascotRuntime.LateUpdate()` 内で `VisualRoot.localPosition` / `localRotation` を揺らす
 - `SpeechBubbleController.LateUpdate()` 内で吹き出し位置を追従
@@ -896,7 +896,8 @@ Unity MCP で確認できた root:
 ランタイムの中心は YuukeiRuntime 上の ResidentAppController で、Awake で runtime object を動的生成し、Start -> InitializeAsync で各サービスを組み立てています。
 毎フレームの入口は ResidentAppController.Update() で、WindowsDesktopAdapter.Tick(), InputContextMonitor.Tick(), MascotRuntime.SetDesktopContext(), MascotRuntime.Tick() が呼ばれます。
 入力は Unity UI イベントではなく InputContextMonitor が Mouse.current を直接ポーリングして処理しています。
-クリック、ダブルクリック、ドラッグ、idle、periodic_tick、file_drop は InputContextMonitor から canonical event として上がります。
+クリック、頭なでなで、ダブルクリック、ドラッグ、idle、periodic_tick、file_drop は InputContextMonitor から canonical event として上がります。
+`character_clicked` には `_event_body_part` が追加され、`character_stroked` は `_event_stroke_*` を含む離散イベントとして同じ FIFO 経路へ流れます。
 イベント配送は ResidentAppController.OnRuntimeEventRaised() -> DaihonBridge.RaiseEventAsync() -> FIFO queue -> DaihonScriptRuntime.RunEventAsync() です。
 alias 解決は AliasRegistry に集中しています。イベント名や関数名追加時はここを通してください。
 永続状態の single source は PersistenceStore です。save.json の形状変更は要注意です。

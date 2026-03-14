@@ -48,6 +48,7 @@ namespace Yuukei.Runtime
 
             RegisterEventAliasInternal("起動時", "app_started", BuiltinPriority, "builtin");
             RegisterEventAliasInternal("クリック", "character_clicked", BuiltinPriority, "builtin");
+            RegisterEventAliasInternal("なでなで", "character_stroked", BuiltinPriority, "builtin");
             RegisterEventAliasInternal("ダブルクリック", "character_double_clicked", BuiltinPriority, "builtin");
             RegisterEventAliasInternal("ドラッグ開始", "character_drag_started", BuiltinPriority, "builtin");
             RegisterEventAliasInternal("ドラッグ終了", "character_drag_ended", BuiltinPriority, "builtin");

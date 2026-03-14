@@ -202,6 +202,67 @@ namespace Yuukei.Tests.EditMode
         }
 
         [Test]
+        public void TryGetBodyPartAtScreenPoint_UsesFallbackBandsForPlaceholder()
+        {
+            var root = new GameObject("BodyPartFallbackTests");
+            var cameraObject = new GameObject("MascotCamera");
+
+            try
+            {
+                var runtime = CreateInitializedRuntime(root, cameraObject);
+                var camera = cameraObject.GetComponent<Camera>();
+
+                var headPoint = camera.WorldToScreenPoint(new Vector3(0f, 2.85f, 0f));
+                var chestPoint = camera.WorldToScreenPoint(new Vector3(0f, 1.95f, 0f));
+                var bellyPoint = camera.WorldToScreenPoint(new Vector3(0f, 1.05f, 0f));
+                var legPoint = camera.WorldToScreenPoint(new Vector3(0f, 0.15f, 0f));
+                var edgePoint = camera.WorldToScreenPoint(new Vector3(0.75f, 1.95f, 0f));
+
+                Assert.That(runtime.TryGetBodyPartAtScreenPoint(headPoint, out var headBodyPart), Is.True);
+                Assert.That(headBodyPart, Is.EqualTo("head"));
+
+                Assert.That(runtime.TryGetBodyPartAtScreenPoint(chestPoint, out var chestBodyPart), Is.True);
+                Assert.That(chestBodyPart, Is.EqualTo("chest"));
+
+                Assert.That(runtime.TryGetBodyPartAtScreenPoint(bellyPoint, out var bellyBodyPart), Is.True);
+                Assert.That(bellyBodyPart, Is.EqualTo("belly"));
+
+                Assert.That(runtime.TryGetBodyPartAtScreenPoint(legPoint, out var legBodyPart), Is.True);
+                Assert.That(legBodyPart, Is.EqualTo("other"));
+
+                Assert.That(runtime.TryGetBodyPartAtScreenPoint(edgePoint, out var edgeBodyPart), Is.True);
+                Assert.That(edgeBodyPart, Is.EqualTo("other"));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(cameraObject);
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void TryGetBodyPartAtScreenPoint_ReturnsFalseOutsideHitbox()
+        {
+            var root = new GameObject("BodyPartMissTests");
+            var cameraObject = new GameObject("MascotCamera");
+
+            try
+            {
+                var runtime = CreateInitializedRuntime(root, cameraObject);
+                var camera = cameraObject.GetComponent<Camera>();
+                var missPoint = camera.WorldToScreenPoint(new Vector3(2.5f, 1.6f, 0f));
+
+                Assert.That(runtime.TryGetBodyPartAtScreenPoint(missPoint, out var bodyPart), Is.False);
+                Assert.That(bodyPart, Is.Empty);
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(cameraObject);
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
         public void ApplyFloatingPose_SuppressesDuringDrag_AndBlendsBackAfterRelease()
         {
             var root = new GameObject("FloatingBlendTests");

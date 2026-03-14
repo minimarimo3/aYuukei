@@ -80,6 +80,7 @@ MVP では、**内部処理・ログ・保存・デバッグでは canonical 英
 
 - `app_started`
 - `character_clicked`
+- `character_stroked`
 - `character_double_clicked`
 - `character_drag_started`
 - `character_drag_ended`
@@ -91,6 +92,7 @@ MVP では、**内部処理・ログ・保存・デバッグでは canonical 英
 
 - `起動時` -> `app_started`
 - `クリック` -> `character_clicked`
+- `なでなで` -> `character_stroked`
 - `ダブルクリック` -> `character_double_clicked`
 - `ドラッグ開始` -> `character_drag_started`
 - `ドラッグ終了` -> `character_drag_ended`
@@ -145,6 +147,17 @@ MVP では、**内部処理・ログ・保存・デバッグでは canonical 英
 - `_event_x`
 - `_event_y`
 - `_event_character_id`
+- `_event_body_part`
+
+#### `character_stroked`
+
+- `_event_body_part`
+- `_event_x`
+- `_event_y`
+- `_event_character_id`
+- `_event_stroke_count`
+- `_event_stroke_speed`
+- `_event_stroke_direction`
 
 #### `character_double_clicked`
 
@@ -179,6 +192,16 @@ MVP では、**内部処理・ログ・保存・デバッグでは canonical 英
 
 - `_event_timestamp`
 - `_event_session_elapsed_seconds`
+
+### 15.3 `character_clicked` / `character_stroked` の追加規約
+
+- `_event_body_part` の値域は `head` / `chest` / `belly` / `other`
+- `character_clicked` の `_event_body_part` は pointer down 時点の部位近似判定を使う
+- `character_stroked` は頭領域上の左右往復 gesture を離散イベントとして発火する
+- `character_stroked` の `_event_body_part` は常に `head`
+- `_event_stroke_count` は gesture window 内で有効だった水平セグメント数
+- `_event_stroke_speed` は gesture 成立時点の水平方向累積距離を経過秒数で割った値
+- `_event_stroke_direction` の値域は `left` / `right` / `mixed`
 
 #### `app_started`
 

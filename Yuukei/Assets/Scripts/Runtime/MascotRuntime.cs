@@ -62,6 +62,11 @@ namespace Yuukei.Runtime
         };
 
         private static readonly string[] HoverMotionCandidates = { "hover", "float", "idle" };
+        private static readonly BodyPartBoneDefinition[] BodyPartBoneDefinitions =
+        {
+            new BodyPartBoneDefinition("head", HumanBodyBones.Head, HumanBodyBones.Neck),
+            new BodyPartBoneDefinition("chest", HumanBodyBones.UpperChest, HumanBodyBones.Chest, HumanBodyBones.Spine),
+        };
         private const float IdleFloatFadeOutSeconds = 0.10f;
         private const float IdleFloatFadeInSeconds = 0.22f;
         private const float DragVelocityNormalization = 900f;
@@ -79,6 +84,23 @@ namespace Yuukei.Runtime
         private const float DragPassiveSwayRestFrequency = 0.38f;
         private const float DragPassiveSwayRestLow = 0.28f;
         private const float DragPassiveSwayRestHigh = 0.72f;
+        private const float BodyPartFallbackCenterLaneMin = 0.22f;
+        private const float BodyPartFallbackCenterLaneMax = 0.78f;
+        private const float BodyPartFallbackHeadMinY = 0.72f;
+        private const float BodyPartFallbackChestMinY = 0.46f;
+        private const float BodyPartFallbackBellyMinY = 0.24f;
+
+        private readonly struct BodyPartBoneDefinition
+        {
+            public BodyPartBoneDefinition(string bodyPart, params HumanBodyBones[] bones)
+            {
+                BodyPart = bodyPart;
+                Bones = bones ?? Array.Empty<HumanBodyBones>();
+            }
+
+            public string BodyPart { get; }
+            public IReadOnlyList<HumanBodyBones> Bones { get; }
+        }
 
         private sealed class LoadedMotion
         {
@@ -556,6 +578,23 @@ namespace Yuukei.Runtime
 
             var ray = _worldCamera.ScreenPointToRay(screenPoint);
             return _hitbox != null && _hitbox.Raycast(ray, out _, 100f);
+        }
+
+        public bool TryGetBodyPartAtScreenPoint(Vector2 screenPoint, out string bodyPart)
+        {
+            bodyPart = string.Empty;
+            if (!HitTestScreenPoint(screenPoint))
+            {
+                return false;
+            }
+
+            if (TryResolveBodyPartFromBones(screenPoint, out bodyPart))
+            {
+                return true;
+            }
+
+            bodyPart = ResolveFallbackBodyPart(screenPoint);
+            return true;
         }
 
         public void MoveByScreenDelta(Vector2 delta)
@@ -1101,6 +1140,283 @@ namespace Yuukei.Runtime
             var additiveRotation = Quaternion.AngleAxis(rollDegrees, localRollAxis.normalized)
                 * Quaternion.AngleAxis(pitchDegrees, localPitchAxis.normalized);
             controlBoneTransform.localRotation = controlBoneTransform.localRotation * additiveRotation;
+        }
+
+        private bool TryResolveBodyPartFromBones(Vector2 screenPoint, out string bodyPart)
+        {
+            bodyPart = string.Empty;
+            if (_worldCamera == null)
+            {
+                return false;
+            }
+
+            if (!TryGetHitboxScreenRect(out var hitboxRect))
+            {
+                return false;
+            }
+
+            var headScreenPoint = default(Vector2);
+            var hasHead = TryGetBodyAnchorScreenPoint(BodyPartBoneDefinitions[0], out headScreenPoint);
+            var chestScreenPoint = default(Vector2);
+            var hasChest = TryGetBodyAnchorScreenPoint(BodyPartBoneDefinitions[1], out chestScreenPoint);
+            var hipsScreenPoint = default(Vector2);
+            var hasHips = TryProjectBodyBoneToScreenPoint(HumanBodyBones.Hips, out hipsScreenPoint);
+
+            if (!hasHead && !hasChest && !hasHips)
+            {
+                return false;
+            }
+
+            if (TryResolveBodyPartFromAnchors(screenPoint, hitboxRect, hasHead, headScreenPoint, hasChest, chestScreenPoint, hasHips, hipsScreenPoint, out bodyPart))
+            {
+                return true;
+            }
+
+            return false;
+        }
+
+        private bool TryResolveBodyPartFromAnchors(
+            Vector2 screenPoint,
+            Rect hitboxRect,
+            bool hasHead,
+            Vector2 headScreenPoint,
+            bool hasChest,
+            Vector2 chestScreenPoint,
+            bool hasHips,
+            Vector2 hipsScreenPoint,
+            out string bodyPart)
+        {
+            bodyPart = string.Empty;
+            var torsoHeight = Mathf.Max(
+                hasHead && hasChest ? Mathf.Abs(headScreenPoint.y - chestScreenPoint.y) : 0f,
+                hasChest && hasHips ? Mathf.Abs(chestScreenPoint.y - hipsScreenPoint.y) : 0f,
+                hitboxRect.height * 0.24f);
+
+            var headRadius = Mathf.Clamp(torsoHeight * 0.92f, hitboxRect.height * 0.10f, hitboxRect.height * 0.24f);
+            var torsoRadius = Mathf.Clamp(torsoHeight * 0.78f, hitboxRect.height * 0.09f, hitboxRect.height * 0.22f);
+            var bestBodyPart = string.Empty;
+            var bestNormalizedDistance = float.MaxValue;
+            if (hasHead)
+            {
+                TryUpdateBestBodyPart(screenPoint, BodyPartBoneDefinitions[0].BodyPart, headScreenPoint, headRadius, ref bestBodyPart, ref bestNormalizedDistance);
+            }
+
+            if (hasChest)
+            {
+                TryUpdateBestBodyPart(screenPoint, BodyPartBoneDefinitions[1].BodyPart, chestScreenPoint, torsoRadius, ref bestBodyPart, ref bestNormalizedDistance);
+            }
+
+            if (TryGetBellyAnchorScreenPoint(hitboxRect, hasChest, chestScreenPoint, hasHips, hipsScreenPoint, out var bellyScreenPoint))
+            {
+                TryUpdateBestBodyPart(screenPoint, "belly", bellyScreenPoint, torsoRadius, ref bestBodyPart, ref bestNormalizedDistance);
+            }
+
+            if (string.IsNullOrEmpty(bestBodyPart))
+            {
+                return false;
+            }
+
+            bodyPart = bestBodyPart;
+            return true;
+        }
+
+        private static void TryUpdateBestBodyPart(
+            Vector2 screenPoint,
+            string candidateBodyPart,
+            Vector2 candidateScreenPoint,
+            float candidateRadius,
+            ref string bestBodyPart,
+            ref float bestNormalizedDistance)
+        {
+            if (candidateRadius <= 0f)
+            {
+                return;
+            }
+
+            var normalizedDistance = Vector2.Distance(screenPoint, candidateScreenPoint) / candidateRadius;
+            if (normalizedDistance > 1f || normalizedDistance >= bestNormalizedDistance)
+            {
+                return;
+            }
+
+            bestNormalizedDistance = normalizedDistance;
+            bestBodyPart = candidateBodyPart;
+        }
+
+        private bool TryGetBodyAnchorScreenPoint(BodyPartBoneDefinition definition, out Vector2 screenPoint)
+        {
+            screenPoint = default;
+            if (definition.Bones == null)
+            {
+                return false;
+            }
+
+            for (var i = 0; i < definition.Bones.Count; i++)
+            {
+                if (TryProjectBodyBoneToScreenPoint(definition.Bones[i], out screenPoint))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        private bool TryGetBellyAnchorScreenPoint(Rect hitboxRect, bool hasChest, Vector2 chestScreenPoint, bool hasHips, Vector2 hipsScreenPoint, out Vector2 bellyScreenPoint)
+        {
+            if (hasChest && hasHips)
+            {
+                bellyScreenPoint = Vector2.Lerp(chestScreenPoint, hipsScreenPoint, 0.58f);
+                return true;
+            }
+
+            if (hasChest)
+            {
+                bellyScreenPoint = chestScreenPoint + Vector2.down * (hitboxRect.height * 0.18f);
+                return true;
+            }
+
+            if (hasHips)
+            {
+                bellyScreenPoint = hipsScreenPoint + Vector2.up * (hitboxRect.height * 0.10f);
+                return true;
+            }
+
+            bellyScreenPoint = default;
+            return false;
+        }
+
+        private bool TryProjectBodyBoneToScreenPoint(HumanBodyBones boneType, out Vector2 screenPoint)
+        {
+            screenPoint = default;
+            if (_worldCamera == null)
+            {
+                return false;
+            }
+
+            if (!TryGetBodyBoneTransform(boneType, out var boneTransform))
+            {
+                return false;
+            }
+
+            var projected = _worldCamera.WorldToScreenPoint(boneTransform.position);
+            if (projected.z <= 0f)
+            {
+                return false;
+            }
+
+            screenPoint = new Vector2(projected.x, projected.y);
+            return true;
+        }
+
+        private bool TryGetBodyBoneTransform(HumanBodyBones boneType, out Transform transform)
+        {
+            transform = null;
+
+            var controlRig = _vrmInstance?.Runtime?.ControlRig;
+            if (TryGetControlRigBoneTransform(controlRig, boneType, out transform))
+            {
+                return true;
+            }
+
+            var animator = controlRig?.ControlRigAnimator;
+            if (animator == null)
+            {
+                animator = _vrmInstance != null ? _vrmInstance.GetComponentInChildren<Animator>() : null;
+            }
+
+            if (animator == null || !animator.isHuman)
+            {
+                return false;
+            }
+
+            transform = animator.GetBoneTransform(boneType);
+            return transform != null;
+        }
+
+        private bool TryGetHitboxScreenRect(out Rect screenRect)
+        {
+            screenRect = default;
+            if (_worldCamera == null || _hitbox == null)
+            {
+                return false;
+            }
+
+            var hitboxTransform = _hitbox.transform;
+            var halfSize = _hitbox.size * 0.5f;
+            var minX = float.PositiveInfinity;
+            var maxX = float.NegativeInfinity;
+            var minY = float.PositiveInfinity;
+            var maxY = float.NegativeInfinity;
+
+            for (var x = -1; x <= 1; x += 2)
+            {
+                for (var y = -1; y <= 1; y += 2)
+                {
+                    for (var z = -1; z <= 1; z += 2)
+                    {
+                        var localCorner = _hitbox.center + Vector3.Scale(halfSize, new Vector3(x, y, z));
+                        var worldCorner = hitboxTransform.TransformPoint(localCorner);
+                        var screenPoint = _worldCamera.WorldToScreenPoint(worldCorner);
+                        if (screenPoint.z <= 0f)
+                        {
+                            continue;
+                        }
+
+                        minX = Mathf.Min(minX, screenPoint.x);
+                        maxX = Mathf.Max(maxX, screenPoint.x);
+                        minY = Mathf.Min(minY, screenPoint.y);
+                        maxY = Mathf.Max(maxY, screenPoint.y);
+                    }
+                }
+            }
+
+            if (float.IsInfinity(minX) || float.IsInfinity(minY))
+            {
+                return false;
+            }
+
+            screenRect = Rect.MinMaxRect(minX, minY, maxX, maxY);
+            return screenRect.width > 0.01f && screenRect.height > 0.01f;
+        }
+
+        internal static string ResolveFallbackBodyPartFromScreenRect(Rect screenRect, Vector2 screenPoint)
+        {
+            if (screenRect.width <= 0f || screenRect.height <= 0f)
+            {
+                return "other";
+            }
+
+            var normalizedX = Mathf.InverseLerp(screenRect.xMin, screenRect.xMax, screenPoint.x);
+            var normalizedY = Mathf.InverseLerp(screenRect.yMin, screenRect.yMax, screenPoint.y);
+            if (normalizedX < BodyPartFallbackCenterLaneMin || normalizedX > BodyPartFallbackCenterLaneMax)
+            {
+                return "other";
+            }
+
+            if (normalizedY >= BodyPartFallbackHeadMinY)
+            {
+                return "head";
+            }
+
+            if (normalizedY >= BodyPartFallbackChestMinY)
+            {
+                return "chest";
+            }
+
+            if (normalizedY >= BodyPartFallbackBellyMinY)
+            {
+                return "belly";
+            }
+
+            return "other";
+        }
+
+        private string ResolveFallbackBodyPart(Vector2 screenPoint)
+        {
+            return TryGetHitboxScreenRect(out var hitboxRect)
+                ? ResolveFallbackBodyPartFromScreenRect(hitboxRect, screenPoint)
+                : "other";
         }
 
         private static bool TryGetControlRigBoneTransform(Vrm10RuntimeControlRig controlRig, HumanBodyBones boneType, out Transform transform)
