@@ -10,7 +10,7 @@ namespace Yuukei.Runtime
     [Serializable]
     public sealed class SpeechBubbleTextStyle
     {
-        public float FontSize = 24f;
+        public float FontSize = 6f;
         public Color TextColor = Color.black;
 
         public SpeechBubbleTextStyle Clone()
@@ -39,12 +39,12 @@ namespace Yuukei.Runtime
     /// </summary>
     public sealed class SpeechBubbleController : MonoBehaviour
     {
-        private const float HorizontalPadding = 16f;
-        private const float VerticalPadding = 14f;
-        private const float MinimumBodyWidth = 160f;
+        private const float HorizontalPadding = 4f + 1f;
+        private const float VerticalPadding = 3f + 1f;
+        private const float MinimumBodyWidth = 40f + 20f;
         private const float MaximumViewportWidthFraction = 0.25f;
-        private const float MinimumTailHeight = 16f;
-        private const float MaximumTailHeight = 24f;
+        private const float MinimumTailHeight = 4f;
+        private const float MaximumTailHeight = 6f;
         private const float TailHeightRatio = 0.18f;
         private const float TailAttachmentInset = 12f;
         private const float ScreenSafeInset = 12f;

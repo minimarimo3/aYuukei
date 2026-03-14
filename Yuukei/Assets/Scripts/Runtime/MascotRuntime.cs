@@ -1138,7 +1138,7 @@ namespace Yuukei.Runtime
                 return;
             }
 
-            var targetHeight = _worldCamera.orthographicSize * 2f / 4f;
+            var targetHeight = _worldCamera.orthographicSize * 2f / 3f;
 
             Renderer[] renderers = null;
             if (_vrmInstance != null)
