@@ -272,7 +272,7 @@ namespace Yuukei.Tests.EditMode
                 runtime.MoveByScreenDelta(new Vector2(240f, 0f));
                 runtime.Tick(0.1f, 0f);
 
-                var expectedHorizontal = StepSpring(0f, 0f, -1f, 0.1f);
+                var expectedHorizontal = StepSpring(0f, 0f, 1f, 0.1f);
                 var expectedHang = StepSpring(0f, 0f, 0.6f, 0.1f);
 
                 Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontal"), Is.EqualTo(expectedHorizontal.Value).Within(0.0001f));

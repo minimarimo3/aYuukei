@@ -723,7 +723,7 @@ namespace Yuukei.Runtime
             var sampleVelocity = _dragDeltaThisFrame / safeDeltaTime;
             _dragDeltaThisFrame = Vector2.zero;
 
-            var horizontalTarget = Mathf.Clamp(-sampleVelocity.x / DragVelocityNormalization, -1f, 1f);
+            var horizontalTarget = Mathf.Clamp(sampleVelocity.x / DragVelocityNormalization, -1f, 1f);
             var hangTarget = (_isUserDragMotionRequested ? DragHangBaseline : 0f)
                 + Mathf.Clamp(-sampleVelocity.y / DragVelocityNormalization, -DragHangVelocityUpContribution, DragHangVelocityDownContribution);
             hangTarget = Mathf.Clamp(hangTarget, -1f, 1f);
