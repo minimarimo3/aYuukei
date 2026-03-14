@@ -271,6 +271,9 @@ namespace Yuukei.Tests.EditMode
                 runtime.SetDesktopContext(displayBounds, displays, new[] { 0 });
 
                 runtime.SetUserDragMotionActive(true);
+                SetPrivateField(runtime, "_dragPassiveHorizontalSeed", 17f);
+                SetPrivateField(runtime, "_dragPassiveHangSeed", 31f);
+                SetPrivateField(runtime, "_dragPassiveRestSeed", 47f);
                 runtime.MoveByScreenDelta(new Vector2(240f, 0f));
                 runtime.Tick(0.1f, 0f);
 
@@ -314,10 +317,13 @@ namespace Yuukei.Tests.EditMode
                 runtime.SetDesktopContext(displayBounds, displays, new[] { 0 });
 
                 runtime.SetUserDragMotionActive(true);
+                SetPrivateField(runtime, "_dragPassiveHorizontalSeed", 17f);
+                SetPrivateField(runtime, "_dragPassiveHangSeed", 31f);
+                SetPrivateField(runtime, "_dragPassiveRestSeed", 47f);
                 runtime.Tick(0.1f, 0f);
 
-                var passiveHorizontalTarget = EvaluatePassiveDragHorizontalSway(0.1f);
-                var passiveHangTarget = 0.72f + EvaluatePassiveDragHangSway(0.1f);
+                var passiveHorizontalTarget = EvaluatePassiveDragHorizontalSway(0.1f, 17f, 47f);
+                var passiveHangTarget = 0.72f + EvaluatePassiveDragHangSway(0.1f, 31f, 60.37f);
                 var expectedHorizontal = StepSpring(0f, 0f, passiveHorizontalTarget, 0.1f);
                 var expectedHang = StepSpring(0f, 0f, passiveHangTarget, 0.1f);
 
@@ -381,18 +387,31 @@ namespace Yuukei.Tests.EditMode
             return (value, velocity);
         }
 
-        private static float EvaluatePassiveDragHorizontalSway(float time)
+        private static float EvaluatePassiveDragHorizontalSway(float time, float swaySeed, float restSeed)
         {
-            return 0.16f * (
-                0.65f * Mathf.Sin(2f * Mathf.PI * 1.35f * time) +
-                0.35f * Mathf.Sin(2f * Mathf.PI * 2.15f * time + 1.2f));
+            return EvaluatePassiveDragNoise(time, swaySeed, restSeed, 0.18f);
         }
 
-        private static float EvaluatePassiveDragHangSway(float time)
+        private static float EvaluatePassiveDragHangSway(float time, float swaySeed, float restSeed)
         {
-            return 0.12f * (
-                0.60f * Mathf.Sin(2f * Mathf.PI * 1.65f * time + 0.9f) +
-                0.40f * Mathf.Sin(2f * Mathf.PI * 2.45f * time + 2.1f));
+            return EvaluatePassiveDragNoise(time, swaySeed, restSeed, 0.14f);
+        }
+
+        private static float EvaluatePassiveDragNoise(float time, float swaySeed, float restSeed, float amplitude)
+        {
+            var direction = SampleSignedNoise(swaySeed, time * 0.82f);
+            var accent = SampleSignedNoise(swaySeed + 37.13f, time * 1.47f);
+            var rest = Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.InverseLerp(0.28f, 0.72f, Mathf.PerlinNoise(restSeed, time * 0.38f)));
+            var composite = 0.68f * direction + 0.32f * accent;
+            return composite * amplitude * rest;
+        }
+
+        private static float SampleSignedNoise(float seed, float time)
+        {
+            return Mathf.PerlinNoise(seed, time) * 2f - 1f;
         }
 
         private static void InvokePrivateMethod(object target, string methodName, params object[] args)

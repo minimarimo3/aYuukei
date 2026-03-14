@@ -72,12 +72,13 @@ namespace Yuukei.Runtime
         private const float DragSpringDamping = 7f;
         private const float DragSecondaryValueEpsilon = 0.01f;
         private const float DragSecondaryVelocityEpsilon = 0.01f;
-        private const float DragPassiveSwayHorizontalAmplitude = 0.16f;
-        private const float DragPassiveSwayHangAmplitude = 0.12f;
-        private const float DragPassiveSwayHorizontalFrequency1 = 1.35f;
-        private const float DragPassiveSwayHorizontalFrequency2 = 2.15f;
-        private const float DragPassiveSwayHangFrequency1 = 1.65f;
-        private const float DragPassiveSwayHangFrequency2 = 2.45f;
+        private const float DragPassiveSwayHorizontalAmplitude = 0.18f;
+        private const float DragPassiveSwayHangAmplitude = 0.14f;
+        private const float DragPassiveSwayDirectionFrequency = 0.82f;
+        private const float DragPassiveSwayAccentFrequency = 1.47f;
+        private const float DragPassiveSwayRestFrequency = 0.38f;
+        private const float DragPassiveSwayRestLow = 0.28f;
+        private const float DragPassiveSwayRestHigh = 0.72f;
 
         private sealed class LoadedMotion
         {
@@ -173,6 +174,9 @@ namespace Yuukei.Runtime
         private float _dragSecondaryHorizontalVelocity;
         private float _dragSecondaryHangVelocity;
         private float _dragSecondaryPassiveTime;
+        private float _dragPassiveHorizontalSeed;
+        private float _dragPassiveHangSeed;
+        private float _dragPassiveRestSeed;
 
         internal MascotMotionPresentationMode DebugPresentationMode => ResolveMotionPresentationMode();
         internal bool DebugIsUserDragMotionRequested => _isUserDragMotionRequested;
@@ -212,6 +216,9 @@ namespace Yuukei.Runtime
             _phase2 = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
             _phase3 = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
             _phaseTilt = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+            _dragPassiveHorizontalSeed = UnityEngine.Random.Range(10f, 90f);
+            _dragPassiveHangSeed = UnityEngine.Random.Range(110f, 190f);
+            _dragPassiveRestSeed = UnityEngine.Random.Range(210f, 290f);
             _idleFloatBlend = 1f;
             ResetProceduralDragSecondaryMotion();
             Debug.Log("[MascotRuntime] 初期化完了");
@@ -740,8 +747,8 @@ namespace Yuukei.Runtime
             if (_isUserDragMotionRequested)
             {
                 var passiveWeight = 1f - Mathf.Clamp01(sampleVelocity.magnitude / (DragVelocityNormalization * 0.9f));
-                horizontalTarget += EvaluatePassiveDragHorizontalSway(_dragSecondaryPassiveTime) * passiveWeight;
-                hangTarget += EvaluatePassiveDragHangSway(_dragSecondaryPassiveTime) * passiveWeight;
+                horizontalTarget += EvaluatePassiveDragHorizontalSway(_dragSecondaryPassiveTime, _dragPassiveHorizontalSeed, _dragPassiveRestSeed) * passiveWeight;
+                hangTarget += EvaluatePassiveDragHangSway(_dragSecondaryPassiveTime, _dragPassiveHangSeed, _dragPassiveRestSeed + 13.37f) * passiveWeight;
             }
 
             horizontalTarget = Mathf.Clamp(horizontalTarget, -1f, 1f);
@@ -791,18 +798,34 @@ namespace Yuukei.Runtime
             _dragSecondaryPassiveTime = 0f;
         }
 
-        private static float EvaluatePassiveDragHorizontalSway(float time)
+        private static float EvaluatePassiveDragHorizontalSway(float time, float swaySeed, float restSeed)
         {
-            return DragPassiveSwayHorizontalAmplitude * (
-                0.65f * Mathf.Sin(2f * Mathf.PI * DragPassiveSwayHorizontalFrequency1 * time) +
-                0.35f * Mathf.Sin(2f * Mathf.PI * DragPassiveSwayHorizontalFrequency2 * time + 1.2f));
+            return EvaluatePassiveDragNoise(time, swaySeed, restSeed, DragPassiveSwayHorizontalAmplitude);
         }
 
-        private static float EvaluatePassiveDragHangSway(float time)
+        private static float EvaluatePassiveDragHangSway(float time, float swaySeed, float restSeed)
         {
-            return DragPassiveSwayHangAmplitude * (
-                0.60f * Mathf.Sin(2f * Mathf.PI * DragPassiveSwayHangFrequency1 * time + 0.9f) +
-                0.40f * Mathf.Sin(2f * Mathf.PI * DragPassiveSwayHangFrequency2 * time + 2.1f));
+            return EvaluatePassiveDragNoise(time, swaySeed, restSeed, DragPassiveSwayHangAmplitude);
+        }
+
+        private static float EvaluatePassiveDragNoise(float time, float swaySeed, float restSeed, float amplitude)
+        {
+            var direction = SampleSignedNoise(swaySeed, time * DragPassiveSwayDirectionFrequency);
+            var accent = SampleSignedNoise(swaySeed + 37.13f, time * DragPassiveSwayAccentFrequency);
+            var rest = Mathf.SmoothStep(
+                0f,
+                1f,
+                Mathf.InverseLerp(
+                    DragPassiveSwayRestLow,
+                    DragPassiveSwayRestHigh,
+                    Mathf.PerlinNoise(restSeed, time * DragPassiveSwayRestFrequency)));
+            var composite = 0.68f * direction + 0.32f * accent;
+            return composite * amplitude * rest;
+        }
+
+        private static float SampleSignedNoise(float seed, float time)
+        {
+            return Mathf.PerlinNoise(seed, time) * 2f - 1f;
         }
 
         private void ApplyPlaceholderMotion(float deltaTime)
