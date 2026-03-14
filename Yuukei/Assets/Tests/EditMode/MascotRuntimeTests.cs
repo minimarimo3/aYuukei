@@ -59,6 +59,11 @@ namespace Yuukei.Tests.EditMode
                 });
                 runtime.SetUserDragMotionActive(true);
                 SetPrivateField(runtime, "_dragMotionBlendWeight", 0.72f);
+                SetPrivateField(runtime, "_dragDeltaThisFrame", new Vector2(32f, -18f));
+                SetPrivateField(runtime, "_dragSecondaryHorizontal", 0.35f);
+                SetPrivateField(runtime, "_dragSecondaryHang", 0.48f);
+                SetPrivateField(runtime, "_dragSecondaryHorizontalVelocity", -0.27f);
+                SetPrivateField(runtime, "_dragSecondaryHangVelocity", 0.19f);
 
                 var monitor = root.AddComponent<InputContextMonitor>();
                 monitor.Initialize(new TestDesktopAdapter(), null, runtime, null);
@@ -69,6 +74,11 @@ namespace Yuukei.Tests.EditMode
 
                 Assert.That(runtime.DebugIsUserDragMotionRequested, Is.False);
                 Assert.That(runtime.DebugDragMotionBlendWeight, Is.EqualTo(0f).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, Vector2>(runtime, "_dragDeltaThisFrame"), Is.EqualTo(Vector2.zero));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontal"), Is.EqualTo(0f).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHang"), Is.EqualTo(0f).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontalVelocity"), Is.EqualTo(0f).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHangVelocity"), Is.EqualTo(0f).Within(0.0001f));
             }
             finally
             {
@@ -189,6 +199,105 @@ namespace Yuukei.Tests.EditMode
             }
         }
 
+        [Test]
+        public void ApplyFloatingPose_SuppressesDuringDrag_AndBlendsBackAfterRelease()
+        {
+            var root = new GameObject("FloatingBlendTests");
+            var cameraObject = new GameObject("MascotCamera");
+
+            try
+            {
+                var runtime = CreateInitializedRuntime(root, cameraObject);
+                var settings = new GlideLocomotionSettings();
+                runtime.ApplyGlideSettings(settings);
+                runtime.SetDesktopContext(new RectInt(0, 0, 1920, 1080), new[] { new DesktopDisplayInfo(0, new RectInt(0, 0, 1920, 1080)) }, new[] { 0 });
+
+                SetPrivateField(runtime, "_phase1", 0f);
+                SetPrivateField(runtime, "_phase2", 0f);
+                SetPrivateField(runtime, "_phase3", 0f);
+                SetPrivateField(runtime, "_phaseTilt", 0f);
+                SetPrivateField(runtime, "_floatTime", 0f);
+
+                runtime.SetUserDragMotionActive(true);
+                InvokePrivateMethod(runtime, "ApplyFloatingPose", 0.5f);
+
+                Assert.That(runtime.DebugVisualLocalPosition, Is.EqualTo(Vector3.zero));
+                Assert.That(runtime.DebugVisualLocalRotation.eulerAngles, Is.EqualTo(Vector3.zero));
+
+                runtime.SetUserDragMotionActive(false);
+                SetPrivateField(runtime, "_floatTime", 0f);
+                InvokePrivateMethod(runtime, "ApplyFloatingPose", 0.05f);
+
+                var earlyBlend = Mathf.MoveTowards(0f, 1f, 0.05f / 0.22f);
+                var earlyPosition = EvaluateFloatingPosition(settings, 0.05f, earlyBlend);
+                var earlyTilt = EvaluateFloatingTilt(settings, 0.05f, earlyBlend);
+                var earlyActualTilt = NormalizeAngle(runtime.DebugVisualLocalRotation.eulerAngles.z);
+
+                Assert.That(runtime.DebugVisualLocalPosition.x, Is.EqualTo(earlyPosition.x).Within(0.0001f));
+                Assert.That(runtime.DebugVisualLocalPosition.y, Is.EqualTo(earlyPosition.y).Within(0.0001f));
+                Assert.That(earlyActualTilt, Is.EqualTo(earlyTilt).Within(0.0001f));
+
+                SetPrivateField(runtime, "_floatTime", 0f);
+                InvokePrivateMethod(runtime, "ApplyFloatingPose", 0.4f);
+
+                var fullPosition = EvaluateFloatingPosition(settings, 0.4f, 1f);
+                var fullTilt = EvaluateFloatingTilt(settings, 0.4f, 1f);
+                var fullActualTilt = NormalizeAngle(runtime.DebugVisualLocalRotation.eulerAngles.z);
+
+                Assert.That(runtime.DebugVisualLocalPosition.x, Is.EqualTo(fullPosition.x).Within(0.0001f));
+                Assert.That(runtime.DebugVisualLocalPosition.y, Is.EqualTo(fullPosition.y).Within(0.0001f));
+                Assert.That(fullActualTilt, Is.EqualTo(fullTilt).Within(0.0001f));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(cameraObject);
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void Tick_UpdatesProceduralDragSecondaryMotion_AndSettlesAfterRelease()
+        {
+            var root = new GameObject("DragSecondaryTests");
+            var cameraObject = new GameObject("MascotCamera");
+
+            try
+            {
+                var runtime = CreateInitializedRuntime(root, cameraObject);
+                var displayBounds = new RectInt(0, 0, 1920, 1080);
+                var displays = new[] { new DesktopDisplayInfo(0, displayBounds) };
+                runtime.SetDesktopContext(displayBounds, displays, new[] { 0 });
+
+                runtime.SetUserDragMotionActive(true);
+                runtime.MoveByScreenDelta(new Vector2(240f, 0f));
+                runtime.Tick(0.1f, 0f);
+
+                var expectedHorizontal = StepSpring(0f, 0f, -1f, 0.1f);
+                var expectedHang = StepSpring(0f, 0f, 0.6f, 0.1f);
+
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontal"), Is.EqualTo(expectedHorizontal.Value).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontalVelocity"), Is.EqualTo(expectedHorizontal.Velocity).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHang"), Is.EqualTo(expectedHang.Value).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHangVelocity"), Is.EqualTo(expectedHang.Velocity).Within(0.0001f));
+
+                runtime.SetUserDragMotionActive(false);
+                for (var i = 0; i < 30; i++)
+                {
+                    runtime.Tick(0.1f, 0f);
+                }
+
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontal"), Is.EqualTo(0f).Within(0.01f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontalVelocity"), Is.EqualTo(0f).Within(0.01f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHang"), Is.EqualTo(0f).Within(0.01f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHangVelocity"), Is.EqualTo(0f).Within(0.01f));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(cameraObject);
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
         private static MascotRuntime CreateInitializedRuntime(GameObject root, GameObject cameraObject)
         {
             var camera = cameraObject.AddComponent<Camera>();
@@ -212,6 +321,32 @@ namespace Yuukei.Tests.EditMode
             return angle;
         }
 
+        private static Vector3 EvaluateFloatingPosition(GlideLocomotionSettings settings, float time, float blend)
+        {
+            var y = settings.FloatAmplitudeY * (
+                0.55f * Mathf.Sin(2f * Mathf.PI * settings.FloatFrequency1 * time) +
+                0.30f * Mathf.Sin(2f * Mathf.PI * settings.FloatFrequency2 * time) +
+                0.15f * Mathf.Sin(2f * Mathf.PI * settings.FloatFrequency3 * time));
+            var x = settings.FloatAmplitudeX *
+                Mathf.Sin(2f * Mathf.PI * settings.FloatFrequency3 * time + 1.2f);
+            return new Vector3(x, y, 0f) * blend;
+        }
+
+        private static float EvaluateFloatingTilt(GlideLocomotionSettings settings, float time, float blend)
+        {
+            var tilt = settings.TiltAmplitudeDeg *
+                Mathf.Sin(2f * Mathf.PI * settings.TiltFrequency * time);
+            return tilt * blend;
+        }
+
+        private static (float Value, float Velocity) StepSpring(float value, float velocity, float target, float deltaTime)
+        {
+            velocity += (target - value) * 26f * deltaTime;
+            velocity *= Mathf.Exp(-7f * deltaTime);
+            value += velocity * deltaTime;
+            return (value, velocity);
+        }
+
         private static void InvokePrivateMethod(object target, string methodName, params object[] args)
         {
             var method = target.GetType().GetMethod(methodName, BindingFlags.Instance | BindingFlags.NonPublic);
@@ -232,6 +367,17 @@ namespace Yuukei.Tests.EditMode
             }
 
             field.SetValue(target, value);
+        }
+
+        private static TValue GetPrivateField<TTarget, TValue>(TTarget target, string fieldName)
+        {
+            var field = typeof(TTarget).GetField(fieldName, BindingFlags.Instance | BindingFlags.NonPublic);
+            if (field == null)
+            {
+                throw new MissingFieldException(typeof(TTarget).FullName, fieldName);
+            }
+
+            return (TValue)field.GetValue(target);
         }
 
         private sealed class TestDesktopAdapter : IDesktopPlatformAdapter

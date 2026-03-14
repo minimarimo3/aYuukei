@@ -62,6 +62,16 @@ namespace Yuukei.Runtime
         };
 
         private static readonly string[] HoverMotionCandidates = { "hover", "float", "idle" };
+        private const float IdleFloatFadeOutSeconds = 0.10f;
+        private const float IdleFloatFadeInSeconds = 0.22f;
+        private const float DragVelocityNormalization = 1200f;
+        private const float DragHangBaseline = 0.60f;
+        private const float DragHangVelocityDownContribution = 0.45f;
+        private const float DragHangVelocityUpContribution = 0.35f;
+        private const float DragSpringStrength = 26f;
+        private const float DragSpringDamping = 7f;
+        private const float DragSecondaryValueEpsilon = 0.01f;
+        private const float DragSecondaryVelocityEpsilon = 0.01f;
 
         private sealed class LoadedMotion
         {
@@ -140,6 +150,7 @@ namespace Yuukei.Runtime
         private float _phase2;
         private float _phase3;
         private float _phaseTilt;
+        private float _idleFloatBlend = 1f;
         private AnimationClip _dragMotionClip;
         private float _dragMotionFadeInSeconds = 0.12f;
         private float _dragMotionFadeOutSeconds = 0.16f;
@@ -150,6 +161,11 @@ namespace Yuukei.Runtime
         private AnimationMixerPlayable _dragMotionMixer;
         private AnimationClipPlayable _dragMotionPlayable;
         private bool _hasDragMotionPlayable;
+        private Vector2 _dragDeltaThisFrame;
+        private float _dragSecondaryHorizontal;
+        private float _dragSecondaryHang;
+        private float _dragSecondaryHorizontalVelocity;
+        private float _dragSecondaryHangVelocity;
 
         internal MascotMotionPresentationMode DebugPresentationMode => ResolveMotionPresentationMode();
         internal bool DebugIsUserDragMotionRequested => _isUserDragMotionRequested;
@@ -189,6 +205,8 @@ namespace Yuukei.Runtime
             _phase2 = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
             _phase3 = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
             _phaseTilt = UnityEngine.Random.Range(0f, Mathf.PI * 2f);
+            _idleFloatBlend = 1f;
+            ResetProceduralDragSecondaryMotion();
             Debug.Log("[MascotRuntime] 初期化完了");
         }
 
@@ -238,6 +256,7 @@ namespace Yuukei.Runtime
             _dragMotionBlendWeight = 0f;
             _dragMotionTime = 0f;
             ApplyDragMotionWeight(0f);
+            ResetProceduralDragSecondaryMotion();
             if (_hasDragMotionPlayable)
             {
                 _dragMotionPlayable.SetTime(0d);
@@ -505,6 +524,7 @@ namespace Yuukei.Runtime
 
             RefreshDesiredMotion();
             ApplyPlaceholderMotion(deltaTime);
+            UpdateProceduralDragSecondaryMotion(deltaTime);
             ProcessLoadedCharacter(deltaTime);
         }
 
@@ -529,6 +549,11 @@ namespace Yuukei.Runtime
             if (!_hasDesktopPosition)
             {
                 SetDesktopPositionInternal(ResolveSafeDesktopPosition());
+            }
+
+            if (_isUserDragMotionRequested)
+            {
+                _dragDeltaThisFrame += delta;
             }
 
             SetDesktopPositionInternal(_desktopPosition + delta);
@@ -652,6 +677,17 @@ namespace Yuukei.Runtime
                 return;
             }
 
+            var shouldSuppressFloat = _isUserDragMotionRequested
+                || _dragMotionBlendWeight > 0.001f
+                || HasProceduralDragSecondaryResidual();
+            var targetBlend = shouldSuppressFloat ? 0f : 1f;
+            var blendFadeSeconds = targetBlend < _idleFloatBlend
+                ? IdleFloatFadeOutSeconds
+                : IdleFloatFadeInSeconds;
+            _idleFloatBlend = blendFadeSeconds <= 0f
+                ? targetBlend
+                : Mathf.MoveTowards(_idleFloatBlend, targetBlend, Mathf.Max(0f, deltaTime) / blendFadeSeconds);
+
             _floatTime += Mathf.Max(0f, deltaTime);
 
             var y = _floatingSettings.FloatAmplitudeY * (
@@ -665,8 +701,74 @@ namespace Yuukei.Runtime
             var tiltZ = _floatingSettings.TiltAmplitudeDeg *
                 Mathf.Sin(2f * Mathf.PI * _floatingSettings.TiltFrequency * _floatTime + _phaseTilt);
 
-            _visualRoot.localPosition = new Vector3(x, y, 0f);
-            _visualRoot.localRotation = Quaternion.Euler(0f, 0f, tiltZ);
+            _visualRoot.localPosition = new Vector3(x, y, 0f) * _idleFloatBlend;
+            _visualRoot.localRotation = Quaternion.Euler(0f, 0f, tiltZ * _idleFloatBlend);
+        }
+
+        private void UpdateProceduralDragSecondaryMotion(float deltaTime)
+        {
+            var safeDeltaTime = Mathf.Max(0f, deltaTime);
+            if (safeDeltaTime <= 0f)
+            {
+                _dragDeltaThisFrame = Vector2.zero;
+                return;
+            }
+
+            if (!_isUserDragMotionRequested && !HasProceduralDragSecondaryResidual())
+            {
+                _dragDeltaThisFrame = Vector2.zero;
+                return;
+            }
+
+            var sampleVelocity = _dragDeltaThisFrame / safeDeltaTime;
+            _dragDeltaThisFrame = Vector2.zero;
+
+            var horizontalTarget = Mathf.Clamp(-sampleVelocity.x / DragVelocityNormalization, -1f, 1f);
+            var hangTarget = (_isUserDragMotionRequested ? DragHangBaseline : 0f)
+                + Mathf.Clamp(-sampleVelocity.y / DragVelocityNormalization, -DragHangVelocityUpContribution, DragHangVelocityDownContribution);
+            hangTarget = Mathf.Clamp(hangTarget, -1f, 1f);
+
+            StepProceduralDragSpring(ref _dragSecondaryHorizontal, ref _dragSecondaryHorizontalVelocity, horizontalTarget, safeDeltaTime);
+            StepProceduralDragSpring(ref _dragSecondaryHang, ref _dragSecondaryHangVelocity, hangTarget, safeDeltaTime);
+
+            if (!_isUserDragMotionRequested)
+            {
+                SnapProceduralDragSpringIfSettled(ref _dragSecondaryHorizontal, ref _dragSecondaryHorizontalVelocity);
+                SnapProceduralDragSpringIfSettled(ref _dragSecondaryHang, ref _dragSecondaryHangVelocity);
+            }
+        }
+
+        private static void StepProceduralDragSpring(ref float value, ref float velocity, float target, float deltaTime)
+        {
+            velocity += (target - value) * DragSpringStrength * deltaTime;
+            velocity *= Mathf.Exp(-DragSpringDamping * deltaTime);
+            value += velocity * deltaTime;
+        }
+
+        private static void SnapProceduralDragSpringIfSettled(ref float value, ref float velocity)
+        {
+            if (Mathf.Abs(value) <= DragSecondaryValueEpsilon && Mathf.Abs(velocity) <= DragSecondaryVelocityEpsilon)
+            {
+                value = 0f;
+                velocity = 0f;
+            }
+        }
+
+        private bool HasProceduralDragSecondaryResidual()
+        {
+            return Mathf.Abs(_dragSecondaryHorizontal) > DragSecondaryValueEpsilon
+                || Mathf.Abs(_dragSecondaryHang) > DragSecondaryValueEpsilon
+                || Mathf.Abs(_dragSecondaryHorizontalVelocity) > DragSecondaryVelocityEpsilon
+                || Mathf.Abs(_dragSecondaryHangVelocity) > DragSecondaryVelocityEpsilon;
+        }
+
+        private void ResetProceduralDragSecondaryMotion()
+        {
+            _dragDeltaThisFrame = Vector2.zero;
+            _dragSecondaryHorizontal = 0f;
+            _dragSecondaryHang = 0f;
+            _dragSecondaryHorizontalVelocity = 0f;
+            _dragSecondaryHangVelocity = 0f;
         }
 
         private void ApplyPlaceholderMotion(float deltaTime)
@@ -707,19 +809,24 @@ namespace Yuukei.Runtime
             UpdateDragMotionBlend(deltaTime);
 
             var runtime = _vrmInstance.Runtime;
-            if (ShouldDriveDragMotion())
+            var controlRig = runtime.ControlRig;
+            if (ShouldDriveDragPresentation(controlRig))
             {
                 runtime.VrmAnimation = null;
-                var controlRig = runtime.ControlRig;
                 if (!ApplyBaseMotionPoseToControlRig())
                 {
                     ApplyCachedControlRigPose();
                 }
 
-                // Keep the drag pose's rotations while preventing translation curves from shifting the pickup anchor.
-                CaptureCurrentDragTranslationState(controlRig);
-                EvaluateDragMotionPlayable(deltaTime);
-                RestoreCapturedDragTranslationState();
+                if (ShouldDriveDragMotion())
+                {
+                    // Keep the drag pose's rotations while preventing translation curves from shifting the pickup anchor.
+                    CaptureCurrentDragTranslationState(controlRig);
+                    EvaluateDragMotionPlayable(deltaTime);
+                    RestoreCapturedDragTranslationState();
+                }
+
+                ApplyProceduralDragSecondaryMotion(controlRig);
                 ApplyExpressionOverride(useActiveMotionSource: false);
                 runtime.Process();
                 return;
@@ -863,6 +970,14 @@ namespace Yuukei.Runtime
             return _dragMotionBlendWeight > 0.001f && CanUseDragMotion();
         }
 
+        private bool ShouldDriveDragPresentation(Vrm10RuntimeControlRig controlRig)
+        {
+            return controlRig != null
+                && (_isUserDragMotionRequested
+                    || _dragMotionBlendWeight > 0.001f
+                    || HasProceduralDragSecondaryResidual());
+        }
+
         private bool CanUseDragMotion()
         {
             return _hasDragMotionPlayable
@@ -877,6 +992,80 @@ namespace Yuukei.Runtime
             {
                 _dragMotionMixer.SetInputWeight(0, Mathf.Clamp01(weight));
             }
+        }
+
+        private void ApplyProceduralDragSecondaryMotion(Vrm10RuntimeControlRig controlRig)
+        {
+            if (controlRig == null)
+            {
+                return;
+            }
+
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.Spine, _dragSecondaryHorizontal * 4f, _dragSecondaryHang * 2f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.Chest, _dragSecondaryHorizontal * 6f, _dragSecondaryHang * 3f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.UpperChest, _dragSecondaryHorizontal * 4f, _dragSecondaryHang * 2f);
+
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftUpperArm, _dragSecondaryHorizontal * 10f, _dragSecondaryHang * 12f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightUpperArm, _dragSecondaryHorizontal * 10f, _dragSecondaryHang * -12f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftLowerArm, _dragSecondaryHorizontal * 14f, _dragSecondaryHang * 16f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightLowerArm, _dragSecondaryHorizontal * 14f, _dragSecondaryHang * -16f);
+
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftUpperLeg, _dragSecondaryHorizontal * 5f, _dragSecondaryHang * 5f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightUpperLeg, _dragSecondaryHorizontal * 5f, _dragSecondaryHang * -5f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftLowerLeg, _dragSecondaryHorizontal * 7f, _dragSecondaryHang * 6f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightLowerLeg, _dragSecondaryHorizontal * 7f, _dragSecondaryHang * -6f);
+        }
+
+        private void ApplyProceduralDragBoneRotation(Vrm10RuntimeControlRig controlRig, HumanBodyBones boneType, float rollDegrees, float pitchDegrees)
+        {
+            if (!TryGetControlRigBoneTransform(controlRig, boneType, out var controlBoneTransform))
+            {
+                return;
+            }
+
+            if (Mathf.Abs(rollDegrees) <= Mathf.Epsilon && Mathf.Abs(pitchDegrees) <= Mathf.Epsilon)
+            {
+                return;
+            }
+
+            var parentTransform = controlBoneTransform.parent;
+            if (parentTransform == null || _root == null)
+            {
+                return;
+            }
+
+            var localRollAxis = parentTransform.InverseTransformDirection(_root.forward);
+            var localPitchAxis = parentTransform.InverseTransformDirection(_root.right);
+            if (localRollAxis.sqrMagnitude <= Mathf.Epsilon || localPitchAxis.sqrMagnitude <= Mathf.Epsilon)
+            {
+                return;
+            }
+
+            var additiveRotation = Quaternion.AngleAxis(rollDegrees, localRollAxis.normalized)
+                * Quaternion.AngleAxis(pitchDegrees, localPitchAxis.normalized);
+            controlBoneTransform.localRotation = controlBoneTransform.localRotation * additiveRotation;
+        }
+
+        private static bool TryGetControlRigBoneTransform(Vrm10RuntimeControlRig controlRig, HumanBodyBones boneType, out Transform transform)
+        {
+            transform = null;
+            if (controlRig == null)
+            {
+                return false;
+            }
+
+            foreach (var (currentBoneType, controlBone) in controlRig.Bones)
+            {
+                if (currentBoneType != boneType || controlBone.ControlBone == null)
+                {
+                    continue;
+                }
+
+                transform = controlBone.ControlBone;
+                return true;
+            }
+
+            return false;
         }
 
         private bool ApplyBaseMotionPoseToControlRig()
@@ -992,6 +1181,7 @@ namespace Yuukei.Runtime
             DestroyDragMotionPlayableGraph();
             _controlRigRestPose.Clear();
             _dragTranslationSnapshots.Clear();
+            ResetProceduralDragSecondaryMotion();
         }
 
         private void RebuildDragMotionPlayableGraph()
