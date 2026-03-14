@@ -64,6 +64,7 @@ namespace Yuukei.Tests.EditMode
                 SetPrivateField(runtime, "_dragSecondaryHang", 0.48f);
                 SetPrivateField(runtime, "_dragSecondaryHorizontalVelocity", -0.27f);
                 SetPrivateField(runtime, "_dragSecondaryHangVelocity", 0.19f);
+                SetPrivateField(runtime, "_dragSecondaryPassiveTime", 1.3f);
 
                 var monitor = root.AddComponent<InputContextMonitor>();
                 monitor.Initialize(new TestDesktopAdapter(), null, runtime, null);
@@ -79,6 +80,7 @@ namespace Yuukei.Tests.EditMode
                 Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHang"), Is.EqualTo(0f).Within(0.0001f));
                 Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontalVelocity"), Is.EqualTo(0f).Within(0.0001f));
                 Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHangVelocity"), Is.EqualTo(0f).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryPassiveTime"), Is.EqualTo(0f).Within(0.0001f));
             }
             finally
             {
@@ -273,7 +275,7 @@ namespace Yuukei.Tests.EditMode
                 runtime.Tick(0.1f, 0f);
 
                 var expectedHorizontal = StepSpring(0f, 0f, 1f, 0.1f);
-                var expectedHang = StepSpring(0f, 0f, 0.6f, 0.1f);
+                var expectedHang = StepSpring(0f, 0f, 0.72f, 0.1f);
 
                 Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontal"), Is.EqualTo(expectedHorizontal.Value).Within(0.0001f));
                 Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontalVelocity"), Is.EqualTo(expectedHorizontal.Velocity).Within(0.0001f));
@@ -290,6 +292,38 @@ namespace Yuukei.Tests.EditMode
                 Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontalVelocity"), Is.EqualTo(0f).Within(0.01f));
                 Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHang"), Is.EqualTo(0f).Within(0.01f));
                 Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHangVelocity"), Is.EqualTo(0f).Within(0.01f));
+            }
+            finally
+            {
+                UnityEngine.Object.DestroyImmediate(cameraObject);
+                UnityEngine.Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void Tick_WhenDraggingWithoutMovement_AddsPassiveGravitySway()
+        {
+            var root = new GameObject("DragPassiveSwayTests");
+            var cameraObject = new GameObject("MascotCamera");
+
+            try
+            {
+                var runtime = CreateInitializedRuntime(root, cameraObject);
+                var displayBounds = new RectInt(0, 0, 1920, 1080);
+                var displays = new[] { new DesktopDisplayInfo(0, displayBounds) };
+                runtime.SetDesktopContext(displayBounds, displays, new[] { 0 });
+
+                runtime.SetUserDragMotionActive(true);
+                runtime.Tick(0.1f, 0f);
+
+                var passiveHorizontalTarget = EvaluatePassiveDragHorizontalSway(0.1f);
+                var passiveHangTarget = 0.72f + EvaluatePassiveDragHangSway(0.1f);
+                var expectedHorizontal = StepSpring(0f, 0f, passiveHorizontalTarget, 0.1f);
+                var expectedHang = StepSpring(0f, 0f, passiveHangTarget, 0.1f);
+
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryPassiveTime"), Is.EqualTo(0.1f).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHorizontal"), Is.EqualTo(expectedHorizontal.Value).Within(0.0001f));
+                Assert.That(GetPrivateField<MascotRuntime, float>(runtime, "_dragSecondaryHang"), Is.EqualTo(expectedHang.Value).Within(0.0001f));
             }
             finally
             {
@@ -345,6 +379,20 @@ namespace Yuukei.Tests.EditMode
             velocity *= Mathf.Exp(-7f * deltaTime);
             value += velocity * deltaTime;
             return (value, velocity);
+        }
+
+        private static float EvaluatePassiveDragHorizontalSway(float time)
+        {
+            return 0.16f * (
+                0.65f * Mathf.Sin(2f * Mathf.PI * 1.35f * time) +
+                0.35f * Mathf.Sin(2f * Mathf.PI * 2.15f * time + 1.2f));
+        }
+
+        private static float EvaluatePassiveDragHangSway(float time)
+        {
+            return 0.12f * (
+                0.60f * Mathf.Sin(2f * Mathf.PI * 1.65f * time + 0.9f) +
+                0.40f * Mathf.Sin(2f * Mathf.PI * 2.45f * time + 2.1f));
         }
 
         private static void InvokePrivateMethod(object target, string methodName, params object[] args)

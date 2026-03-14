@@ -64,14 +64,20 @@ namespace Yuukei.Runtime
         private static readonly string[] HoverMotionCandidates = { "hover", "float", "idle" };
         private const float IdleFloatFadeOutSeconds = 0.10f;
         private const float IdleFloatFadeInSeconds = 0.22f;
-        private const float DragVelocityNormalization = 1200f;
-        private const float DragHangBaseline = 0.60f;
+        private const float DragVelocityNormalization = 900f;
+        private const float DragHangBaseline = 0.72f;
         private const float DragHangVelocityDownContribution = 0.45f;
         private const float DragHangVelocityUpContribution = 0.35f;
         private const float DragSpringStrength = 26f;
         private const float DragSpringDamping = 7f;
         private const float DragSecondaryValueEpsilon = 0.01f;
         private const float DragSecondaryVelocityEpsilon = 0.01f;
+        private const float DragPassiveSwayHorizontalAmplitude = 0.16f;
+        private const float DragPassiveSwayHangAmplitude = 0.12f;
+        private const float DragPassiveSwayHorizontalFrequency1 = 1.35f;
+        private const float DragPassiveSwayHorizontalFrequency2 = 2.15f;
+        private const float DragPassiveSwayHangFrequency1 = 1.65f;
+        private const float DragPassiveSwayHangFrequency2 = 2.45f;
 
         private sealed class LoadedMotion
         {
@@ -166,6 +172,7 @@ namespace Yuukei.Runtime
         private float _dragSecondaryHang;
         private float _dragSecondaryHorizontalVelocity;
         private float _dragSecondaryHangVelocity;
+        private float _dragSecondaryPassiveTime;
 
         internal MascotMotionPresentationMode DebugPresentationMode => ResolveMotionPresentationMode();
         internal bool DebugIsUserDragMotionRequested => _isUserDragMotionRequested;
@@ -722,10 +729,22 @@ namespace Yuukei.Runtime
 
             var sampleVelocity = _dragDeltaThisFrame / safeDeltaTime;
             _dragDeltaThisFrame = Vector2.zero;
+            if (_isUserDragMotionRequested)
+            {
+                _dragSecondaryPassiveTime += safeDeltaTime;
+            }
 
             var horizontalTarget = Mathf.Clamp(sampleVelocity.x / DragVelocityNormalization, -1f, 1f);
             var hangTarget = (_isUserDragMotionRequested ? DragHangBaseline : 0f)
                 + Mathf.Clamp(-sampleVelocity.y / DragVelocityNormalization, -DragHangVelocityUpContribution, DragHangVelocityDownContribution);
+            if (_isUserDragMotionRequested)
+            {
+                var passiveWeight = 1f - Mathf.Clamp01(sampleVelocity.magnitude / (DragVelocityNormalization * 0.9f));
+                horizontalTarget += EvaluatePassiveDragHorizontalSway(_dragSecondaryPassiveTime) * passiveWeight;
+                hangTarget += EvaluatePassiveDragHangSway(_dragSecondaryPassiveTime) * passiveWeight;
+            }
+
+            horizontalTarget = Mathf.Clamp(horizontalTarget, -1f, 1f);
             hangTarget = Mathf.Clamp(hangTarget, -1f, 1f);
 
             StepProceduralDragSpring(ref _dragSecondaryHorizontal, ref _dragSecondaryHorizontalVelocity, horizontalTarget, safeDeltaTime);
@@ -769,6 +788,21 @@ namespace Yuukei.Runtime
             _dragSecondaryHang = 0f;
             _dragSecondaryHorizontalVelocity = 0f;
             _dragSecondaryHangVelocity = 0f;
+            _dragSecondaryPassiveTime = 0f;
+        }
+
+        private static float EvaluatePassiveDragHorizontalSway(float time)
+        {
+            return DragPassiveSwayHorizontalAmplitude * (
+                0.65f * Mathf.Sin(2f * Mathf.PI * DragPassiveSwayHorizontalFrequency1 * time) +
+                0.35f * Mathf.Sin(2f * Mathf.PI * DragPassiveSwayHorizontalFrequency2 * time + 1.2f));
+        }
+
+        private static float EvaluatePassiveDragHangSway(float time)
+        {
+            return DragPassiveSwayHangAmplitude * (
+                0.60f * Mathf.Sin(2f * Mathf.PI * DragPassiveSwayHangFrequency1 * time + 0.9f) +
+                0.40f * Mathf.Sin(2f * Mathf.PI * DragPassiveSwayHangFrequency2 * time + 2.1f));
         }
 
         private void ApplyPlaceholderMotion(float deltaTime)
@@ -1001,19 +1035,19 @@ namespace Yuukei.Runtime
                 return;
             }
 
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.Spine, _dragSecondaryHorizontal * 4f, _dragSecondaryHang * 2f);
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.Chest, _dragSecondaryHorizontal * 6f, _dragSecondaryHang * 3f);
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.UpperChest, _dragSecondaryHorizontal * 4f, _dragSecondaryHang * 2f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.Spine, _dragSecondaryHorizontal * 5f, _dragSecondaryHang * 3f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.Chest, _dragSecondaryHorizontal * 7.5f, _dragSecondaryHang * 4f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.UpperChest, _dragSecondaryHorizontal * 5f, _dragSecondaryHang * 3f);
 
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftUpperArm, _dragSecondaryHorizontal * 10f, _dragSecondaryHang * 12f);
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightUpperArm, _dragSecondaryHorizontal * 10f, _dragSecondaryHang * -12f);
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftLowerArm, _dragSecondaryHorizontal * 14f, _dragSecondaryHang * 16f);
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightLowerArm, _dragSecondaryHorizontal * 14f, _dragSecondaryHang * -16f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftUpperArm, _dragSecondaryHorizontal * 12f, _dragSecondaryHang * 14f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightUpperArm, _dragSecondaryHorizontal * 12f, _dragSecondaryHang * -14f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftLowerArm, _dragSecondaryHorizontal * 17f, _dragSecondaryHang * 18f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightLowerArm, _dragSecondaryHorizontal * 17f, _dragSecondaryHang * -18f);
 
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftUpperLeg, _dragSecondaryHorizontal * 5f, _dragSecondaryHang * 5f);
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightUpperLeg, _dragSecondaryHorizontal * 5f, _dragSecondaryHang * -5f);
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftLowerLeg, _dragSecondaryHorizontal * 7f, _dragSecondaryHang * 6f);
-            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightLowerLeg, _dragSecondaryHorizontal * 7f, _dragSecondaryHang * -6f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftUpperLeg, _dragSecondaryHorizontal * 6f, _dragSecondaryHang * 6f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightUpperLeg, _dragSecondaryHorizontal * 6f, _dragSecondaryHang * -6f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.LeftLowerLeg, _dragSecondaryHorizontal * 8.5f, _dragSecondaryHang * 7f);
+            ApplyProceduralDragBoneRotation(controlRig, HumanBodyBones.RightLowerLeg, _dragSecondaryHorizontal * 8.5f, _dragSecondaryHang * -7f);
         }
 
         private void ApplyProceduralDragBoneRotation(Vrm10RuntimeControlRig controlRig, HumanBodyBones boneType, float rollDegrees, float pitchDegrees)
